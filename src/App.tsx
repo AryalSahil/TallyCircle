@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { SpeedInsights } from '@vercel/speed-insights/react';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ToastProvider } from './contexts/ToastContext';
@@ -83,6 +84,7 @@ export default function App() {
           </AuthProvider>
         </ToastProvider>
       </ThemeProvider>
+      <SpeedInsights />
     </ErrorBoundary>
   );
 }
