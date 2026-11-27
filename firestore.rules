@@ -1,0 +1,533 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: deny all by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Primitive Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(uid) {
+      return isVerifiedUser() && request.auth.uid == uid;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isGroupMember(groupId) {
+      return isVerifiedUser()
+        && exists(/databases/$(database)/documents/groups/$(groupId))
+        && request.auth.uid in get(/databases/$(database)/documents/groups/$(groupId)).data.memberUids;
+    }
+
+    // --- Validation Blueprints ---
+    function isValidUserPrivate(data, uid) {
+      return data.keys().hasAll(['uid', 'fullName', 'email', 'handle', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'fullName', 'email', 'phone', 'upiId', 'photoUrl', 'handle', 'theme', 'preferredCurrency', 'customTags', 'createdAt', 'updatedAt'])
+        && data.uid == uid
+        && data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 80
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 120
+        && (!('phone' in data) || (data.phone is string && data.phone.size() <= 30))
+        && (!('upiId' in data) || (data.upiId is string && data.upiId.size() <= 100))
+        && (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 500))
+        && data.handle is string && data.handle.size() >= 2 && data.handle.size() <= 40 && data.handle.matches('^[a-z0-9_]+$')
+        && (!('theme' in data) || data.theme in ['light', 'dark', 'system'])
+        && (!('preferredCurrency' in data) || data.preferredCurrency in ['INR', 'USD', 'EUR', 'GBP', 'AED', 'SGD', 'THB'])
+        && (!('customTags' in data) || (data.customTags is list && data.customTags.size() <= 40 && (data.customTags.size() == 0 || (data.customTags[0] is string && data.customTags[0].size() >= 1 && data.customTags[0].size() <= 30))))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPublicProfile(data, uid) {
+      return data.keys().hasAll(['uid', 'displayName', 'handle', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'handle', 'photoUrl', 'upiId', 'createdAt', 'updatedAt'])
+        && data.uid == uid
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+        && data.handle is string && data.handle.size() >= 2 && data.handle.size() <= 40 && data.handle.matches('^[a-z0-9_]+$')
+        && (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 500))
+        && (!('upiId' in data) || (data.upiId is string && data.upiId.size() <= 100))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUserLookup(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'handle', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'handle', 'photoUrl', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+        && data.handle is string && data.handle.size() >= 2 && data.handle.size() <= 40
+        && (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 500))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFriendship(data) {
+      return data.keys().hasAll(['users', 'requesterUid', 'recipientUid', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['users', 'requesterUid', 'recipientUid', 'status', 'createdAt', 'updatedAt'])
+        && data.users is list && data.users.size() == 2
+        && data.users[0] is string && data.users[0].size() >= 1 && data.users[0].size() <= 128
+        && data.users[1] is string && data.users[1].size() >= 1 && data.users[1].size() <= 128
+        && data.requesterUid is string && data.requesterUid in data.users
+        && data.recipientUid is string && data.recipientUid in data.users
+        && data.requesterUid != data.recipientUid
+        && data.status in ['pending', 'accepted', 'rejected']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFriendInvite(data) {
+      return data.keys().hasAll(['token', 'creatorUid', 'creatorName', 'expiresAt', 'maxUses', 'usesCount', 'usedBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['token', 'creatorUid', 'creatorName', 'expiresAt', 'maxUses', 'usesCount', 'usedBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.token)
+        && data.creatorUid is string && data.creatorUid.size() >= 1 && data.creatorUid.size() <= 128
+        && data.creatorName is string && data.creatorName.size() >= 1 && data.creatorName.size() <= 80
+        && data.expiresAt is timestamp
+        && data.maxUses is int && data.maxUses >= 1 && data.maxUses <= 100
+        && data.usesCount is int && data.usesCount >= 0 && data.usesCount <= data.maxUses
+        && data.usedBy is list && data.usedBy.size() <= 100
+        && (data.usedBy.size() == 0 || data.usedBy[0] is string)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidGroup(data) {
+      return data.keys().hasAll(['name', 'description', 'currency', 'isArchived', 'memberUids', 'memberNames', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['name', 'description', 'coverImage', 'currency', 'isArchived', 'startDate', 'endDate', 'memberUids', 'memberNames', 'lastJoinToken', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
+        && data.description is string && data.description.size() <= 500
+        && (!('coverImage' in data) || (data.coverImage is string && data.coverImage.size() <= 350000))
+        && data.currency == 'INR'
+        && data.isArchived is bool
+        && (!('startDate' in data) || (data.startDate is string && data.startDate.size() <= 20))
+        && (!('endDate' in data) || (data.endDate is string && data.endDate.size() <= 20))
+        && (!('lastJoinToken' in data) || (data.lastJoinToken is string && data.lastJoinToken.size() <= 128))
+        && data.memberUids is list && data.memberUids.size() >= 1 && data.memberUids.size() <= 50
+        && data.memberUids[0] is string
+        && data.memberNames is map && data.memberNames.size() <= 100
+        && data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidGroupInvite(data) {
+      return data.keys().hasAll(['token', 'groupId', 'groupName', 'createdBy', 'expiresAt', 'maxUses', 'usesCount', 'usedBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['token', 'groupId', 'groupName', 'createdBy', 'expiresAt', 'maxUses', 'usesCount', 'usedBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.token)
+        && isValidId(data.groupId)
+        && data.groupName is string && data.groupName.size() >= 1 && data.groupName.size() <= 80
+        && data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128
+        && data.expiresAt is timestamp
+        && data.maxUses is int && data.maxUses >= 1 && data.maxUses <= 100
+        && data.usesCount is int && data.usesCount >= 0 && data.usesCount <= data.maxUses
+        && data.usedBy is list && data.usedBy.size() <= 100
+        && (data.usedBy.size() == 0 || data.usedBy[0] is string)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidExpense(data, groupId) {
+      return data.keys().hasAll(['groupId', 'title', 'description', 'amountPaise', 'category', 'expenseDate', 'splitMethod', 'payers', 'shares', 'participantUids', 'payerUids', 'isRecurring', 'recurringFrequency', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['groupId', 'title', 'description', 'amountPaise', 'currency', 'originalAmountMinor', 'exchangeRateToInr', 'tags', 'category', 'expenseDate', 'splitMethod', 'payers', 'shares', 'participantUids', 'payerUids', 'receiptImage', 'isRecurring', 'recurringFrequency', 'recurringIntervalDays', 'nextOccurrenceDate', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt'])
+        && data.groupId == groupId
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 120
+        && data.description is string && data.description.size() <= 500
+        && data.amountPaise is int && data.amountPaise > 0 && data.amountPaise <= 1000000000
+        && (!('currency' in data) || data.currency in ['INR', 'USD', 'EUR', 'GBP', 'AED', 'SGD', 'THB'])
+        && (!('originalAmountMinor' in data) || (data.originalAmountMinor is int && data.originalAmountMinor > 0 && data.originalAmountMinor <= 1000000000))
+        && (!('exchangeRateToInr' in data) || (data.exchangeRateToInr is number && data.exchangeRateToInr > 0 && data.exchangeRateToInr <= 100000))
+        && (!('tags' in data) || (data.tags is list && data.tags.size() <= 10 && (data.tags.size() == 0 || (data.tags[0] is string && data.tags[0].size() >= 1 && data.tags[0].size() <= 30))))
+        && data.category in ['Food', 'Restaurant', 'Travel', 'Hotel', 'Clubbing', 'Shopping', 'Entertainment', 'Transport', 'Fuel', 'Tickets', 'Other']
+        && data.expenseDate is string && data.expenseDate.size() >= 4 && data.expenseDate.size() <= 40
+        && data.splitMethod in ['equal', 'unequal', 'percentage', 'shares']
+        && data.payers is list && data.payers.size() >= 1 && data.payers.size() <= 50 && data.payers[0] is map
+        && data.shares is list && data.shares.size() >= 1 && data.shares.size() <= 50 && data.shares[0] is map
+        && data.participantUids is list && data.participantUids.size() >= 1 && data.participantUids.size() <= 50 && data.participantUids[0] is string
+        && data.payerUids is list && data.payerUids.size() >= 1 && data.payerUids.size() <= 50 && data.payerUids[0] is string
+        && (!('receiptImage' in data) || (data.receiptImage is string && data.receiptImage.size() <= 450000))
+        && data.isRecurring is bool
+        && data.recurringFrequency in ['none', 'weekly', 'monthly', 'custom']
+        && (!('recurringIntervalDays' in data) || (data.recurringIntervalDays is int && data.recurringIntervalDays >= 0 && data.recurringIntervalDays <= 365))
+        && (!('nextOccurrenceDate' in data) || (data.nextOccurrenceDate is string && data.nextOccurrenceDate.size() <= 40))
+        && data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128
+        && data.updatedBy is string && data.updatedBy.size() >= 1 && data.updatedBy.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidExpenseNote(data) {
+      return data.keys().hasAll(['authorUid', 'authorName', 'text', 'createdAt'])
+        && data.keys().hasOnly(['authorUid', 'authorName', 'text', 'createdAt'])
+        && data.authorUid is string && data.authorUid.size() >= 1 && data.authorUid.size() <= 128
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 80
+        && data.text is string && data.text.size() >= 1 && data.text.size() <= 500
+        && data.createdAt is timestamp;
+    }
+
+    function isValidSettlement(data, groupId) {
+      return data.keys().hasAll(['groupId', 'fromUid', 'fromName', 'toUid', 'toName', 'amountPaise', 'method', 'status', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['groupId', 'fromUid', 'fromName', 'toUid', 'toName', 'amountPaise', 'method', 'upiTransactionRef', 'note', 'status', 'createdBy', 'confirmedBy', 'disputeReason', 'createdAt', 'updatedAt'])
+        && data.groupId == groupId
+        && data.fromUid is string && data.fromUid.size() >= 1 && data.fromUid.size() <= 128
+        && data.fromName is string && data.fromName.size() >= 1 && data.fromName.size() <= 80
+        && data.toUid is string && data.toUid.size() >= 1 && data.toUid.size() <= 128
+        && data.toName is string && data.toName.size() >= 1 && data.toName.size() <= 80
+        && data.fromUid != data.toUid
+        && data.amountPaise is int && data.amountPaise > 0 && data.amountPaise <= 1000000000
+        && data.method in ['cash', 'upi']
+        && (!('upiTransactionRef' in data) || (data.upiTransactionRef is string && data.upiTransactionRef.size() <= 120))
+        && (!('note' in data) || (data.note is string && data.note.size() <= 250))
+        && data.status in ['pending', 'awaiting_confirmation', 'confirmed', 'disputed']
+        && data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128
+        && (!('confirmedBy' in data) || (data.confirmedBy is string && data.confirmedBy.size() <= 128))
+        && (!('disputeReason' in data) || (data.disputeReason is string && data.disputeReason.size() <= 250))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidActivity(data, groupId) {
+      return data.keys().hasAll(['groupId', 'actorUid', 'actorName', 'type', 'summary', 'createdAt'])
+        && data.keys().hasOnly(['groupId', 'actorUid', 'actorName', 'type', 'summary', 'relatedId', 'createdAt'])
+        && data.groupId == groupId
+        && data.actorUid is string && data.actorUid.size() >= 1 && data.actorUid.size() <= 128
+        && data.actorName is string && data.actorName.size() >= 1 && data.actorName.size() <= 80
+        && data.type is string && data.type.size() >= 1 && data.type.size() <= 50
+        && data.summary is string && data.summary.size() >= 1 && data.summary.size() <= 240
+        && (!('relatedId' in data) || (data.relatedId is string && data.relatedId.size() <= 128))
+        && data.createdAt is timestamp;
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll(['recipientUid', 'senderUid', 'senderName', 'type', 'title', 'body', 'isRead', 'createdAt'])
+        && data.keys().hasOnly(['recipientUid', 'senderUid', 'senderName', 'type', 'title', 'body', 'link', 'groupId', 'isRead', 'createdAt'])
+        && data.recipientUid is string && data.recipientUid.size() >= 1 && data.recipientUid.size() <= 128
+        && data.senderUid is string && data.senderUid.size() >= 1 && data.senderUid.size() <= 128
+        && data.senderName is string && data.senderName.size() >= 1 && data.senderName.size() <= 80
+        && data.type is string && data.type.size() >= 1 && data.type.size() <= 50
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 120
+        && data.body is string && data.body.size() >= 1 && data.body.size() <= 300
+        && (!('link' in data) || (data.link is string && data.link.size() <= 200))
+        && (!('groupId' in data) || (data.groupId is string && data.groupId.size() <= 128))
+        && data.isRead is bool
+        && data.createdAt is timestamp;
+    }
+
+    // --- Collection Rules ---
+
+    match /users/{uid} {
+      allow get: if isValidId(uid) && isOwner(uid);
+      allow list: if false;
+      allow create: if isValidId(uid) && isOwner(uid)
+        && isValidUserPrivate(incoming(), uid)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(uid) && isOwner(uid)
+        && isValidUserPrivate(incoming(), uid)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'phone', 'upiId', 'photoUrl', 'handle', 'theme', 'preferredCurrency', 'customTags', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    match /publicProfiles/{uid} {
+      allow get: if isValidId(uid) && isVerifiedUser();
+      allow list: if isVerifiedUser() && resource.data.uid == request.auth.uid;
+      allow create: if isValidId(uid) && isOwner(uid)
+        && isValidPublicProfile(incoming(), uid)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(uid) && isOwner(uid)
+        && isValidPublicProfile(incoming(), uid)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'handle', 'photoUrl', 'upiId', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    match /userLookup/{lookupKey} {
+      allow get: if isValidId(lookupKey) && isVerifiedUser();
+      allow list: if false;
+      allow create: if isValidId(lookupKey) && isVerifiedUser()
+        && isValidUserLookup(incoming())
+        && incoming().uid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(lookupKey) && isVerifiedUser()
+        && isValidUserLookup(incoming())
+        && existing().uid == request.auth.uid
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'handle', 'photoUrl', 'updatedAt']);
+      allow delete: if isValidId(lookupKey) && isVerifiedUser() && existing().uid == request.auth.uid;
+    }
+
+    match /friendships/{friendshipId} {
+      allow get: if isValidId(friendshipId) && isVerifiedUser() && request.auth.uid in resource.data.users;
+      allow list: if isVerifiedUser() && request.auth.uid in resource.data.users;
+      allow create: if isValidId(friendshipId) && isVerifiedUser()
+        && isValidFriendship(incoming())
+        && incoming().requesterUid == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(friendshipId) && isVerifiedUser()
+        && isValidFriendship(incoming())
+        && request.auth.uid in existing().users
+        && incoming().users == existing().users
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (existing().status == 'pending' && request.auth.uid == existing().recipientUid
+            && incoming().requesterUid == existing().requesterUid
+            && incoming().recipientUid == existing().recipientUid
+            && incoming().status in ['accepted', 'rejected']
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+          ||
+          (existing().status == 'rejected' && request.auth.uid == incoming().requesterUid
+            && incoming().status == 'pending'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'requesterUid', 'recipientUid', 'updatedAt']))
+        );
+      allow delete: if isValidId(friendshipId) && isVerifiedUser() && request.auth.uid in existing().users;
+    }
+
+    match /friendInvites/{token} {
+      allow get: if isValidId(token) && isVerifiedUser();
+      allow list: if isVerifiedUser() && resource.data.creatorUid == request.auth.uid;
+      allow create: if isValidId(token) && isVerifiedUser()
+        && isValidFriendInvite(incoming())
+        && incoming().token == token
+        && incoming().creatorUid == request.auth.uid
+        && incoming().usesCount == 0
+        && incoming().usedBy.size() == 0
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(token) && isVerifiedUser()
+        && isValidFriendInvite(incoming())
+        && incoming().token == existing().token
+        && incoming().creatorUid == existing().creatorUid
+        && incoming().creatorName == existing().creatorName
+        && incoming().expiresAt == existing().expiresAt
+        && incoming().maxUses == existing().maxUses
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && existing().usesCount < existing().maxUses
+        && request.time < existing().expiresAt
+        && incoming().usesCount == existing().usesCount + 1
+        && !(request.auth.uid in existing().usedBy)
+        && request.auth.uid in incoming().usedBy
+        && incoming().usedBy.size() == existing().usedBy.size() + 1
+        && incoming().diff(existing()).affectedKeys().hasOnly(['usesCount', 'usedBy', 'updatedAt']);
+      allow delete: if isValidId(token) && isVerifiedUser() && existing().creatorUid == request.auth.uid;
+    }
+
+    match /groups/{groupId} {
+      allow get: if isValidId(groupId) && isVerifiedUser() && request.auth.uid in resource.data.memberUids;
+      allow list: if isVerifiedUser() && request.auth.uid in resource.data.memberUids;
+      allow create: if isValidId(groupId) && isVerifiedUser()
+        && isValidGroup(incoming())
+        && incoming().createdBy == request.auth.uid
+        && request.auth.uid in incoming().memberUids
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(groupId) && isVerifiedUser()
+        && isValidGroup(incoming())
+        && incoming().createdBy == existing().createdBy
+        && incoming().currency == existing().currency
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (request.auth.uid in existing().memberUids
+            && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'coverImage', 'isArchived', 'startDate', 'endDate', 'memberUids', 'memberNames', 'updatedAt']))
+          ||
+          (!(request.auth.uid in existing().memberUids)
+            && request.auth.uid in incoming().memberUids
+            && incoming().memberUids.hasAll(existing().memberUids)
+            && incoming().memberUids.size() == existing().memberUids.size() + 1
+            && 'lastJoinToken' in incoming()
+            && isValidId(incoming().lastJoinToken)
+            && exists(/databases/$(database)/documents/groupInvites/$(incoming().lastJoinToken))
+            && get(/databases/$(database)/documents/groupInvites/$(incoming().lastJoinToken)).data.groupId == groupId
+            && getAfter(/databases/$(database)/documents/groupInvites/$(incoming().lastJoinToken)).data.usesCount == get(/databases/$(database)/documents/groupInvites/$(incoming().lastJoinToken)).data.usesCount + 1
+            && incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'memberNames', 'lastJoinToken', 'updatedAt']))
+        );
+      allow delete: if false;
+
+      match /expenses/{expenseId} {
+        allow get: if isValidId(groupId) && isValidId(expenseId) && isGroupMember(groupId);
+        allow list: if isValidId(groupId) && isGroupMember(groupId);
+        allow create: if isValidId(groupId) && isValidId(expenseId) && isVerifiedUser()
+          && isValidExpense(incoming(), groupId)
+          && incoming().createdBy == request.auth.uid
+          && incoming().updatedBy == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isGroupMember(groupId);
+        allow update: if isValidId(groupId) && isValidId(expenseId) && isVerifiedUser()
+          && isValidExpense(incoming(), groupId)
+          && incoming().groupId == existing().groupId
+          && incoming().createdBy == existing().createdBy
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedBy == request.auth.uid
+          && incoming().updatedAt == request.time
+          && isGroupMember(groupId)
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'description', 'amountPaise', 'currency', 'originalAmountMinor', 'exchangeRateToInr', 'tags',
+            'category', 'expenseDate', 'splitMethod', 'payers', 'shares', 'participantUids', 'payerUids',
+            'receiptImage', 'isRecurring', 'recurringFrequency', 'recurringIntervalDays',
+            'nextOccurrenceDate', 'updatedBy', 'updatedAt'
+          ]);
+        allow delete: if isValidId(groupId) && isValidId(expenseId) && isGroupMember(groupId);
+
+        match /notes/{noteId} {
+          allow get: if isValidId(groupId) && isValidId(expenseId) && isValidId(noteId) && isGroupMember(groupId);
+          allow list: if isValidId(groupId) && isValidId(expenseId) && isGroupMember(groupId);
+          allow create: if isValidId(groupId) && isValidId(expenseId) && isValidId(noteId) && isVerifiedUser()
+            && isValidExpenseNote(incoming())
+            && incoming().authorUid == request.auth.uid
+            && incoming().createdAt == request.time
+            && isGroupMember(groupId);
+          allow update: if false;
+          allow delete: if isValidId(groupId) && isValidId(expenseId) && isValidId(noteId)
+            && isGroupMember(groupId)
+            && existing().authorUid == request.auth.uid;
+        }
+      }
+
+      match /settlements/{settlementId} {
+        allow get: if isValidId(groupId) && isValidId(settlementId) && isGroupMember(groupId);
+        allow list: if isValidId(groupId) && isGroupMember(groupId);
+        allow create: if isValidId(groupId) && isValidId(settlementId) && isVerifiedUser()
+          && isValidSettlement(incoming(), groupId)
+          && incoming().createdBy == request.auth.uid
+          && incoming().status in ['pending', 'awaiting_confirmation']
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isGroupMember(groupId);
+        allow update: if isValidId(groupId) && isValidId(settlementId) && isVerifiedUser()
+          && isValidSettlement(incoming(), groupId)
+          && existing().status != 'confirmed'
+          && incoming().groupId == existing().groupId
+          && incoming().fromUid == existing().fromUid
+          && incoming().fromName == existing().fromName
+          && incoming().toUid == existing().toUid
+          && incoming().toName == existing().toName
+          && incoming().amountPaise == existing().amountPaise
+          && incoming().createdBy == existing().createdBy
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && isGroupMember(groupId)
+          && (
+            (request.auth.uid == existing().fromUid
+              && existing().status in ['pending', 'disputed']
+              && incoming().status == 'awaiting_confirmation'
+              && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'method', 'upiTransactionRef', 'note', 'updatedAt']))
+            ||
+            (request.auth.uid == existing().toUid
+              && existing().status in ['pending', 'awaiting_confirmation', 'disputed']
+              && incoming().status == 'confirmed'
+              && incoming().confirmedBy == request.auth.uid
+              && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'confirmedBy', 'updatedAt']))
+            ||
+            (request.auth.uid == existing().toUid
+              && existing().status in ['pending', 'awaiting_confirmation']
+              && incoming().status == 'disputed'
+              && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'disputeReason', 'updatedAt']))
+          );
+        allow delete: if isValidId(groupId) && isValidId(settlementId)
+          && isGroupMember(groupId)
+          && existing().status != 'confirmed'
+          && (request.auth.uid == existing().createdBy || request.auth.uid == existing().fromUid || request.auth.uid == existing().toUid);
+      }
+
+      match /activities/{activityId} {
+        allow get: if isValidId(groupId) && isValidId(activityId) && isGroupMember(groupId);
+        allow list: if isValidId(groupId) && isGroupMember(groupId);
+        allow create: if isValidId(groupId) && isValidId(activityId) && isVerifiedUser()
+          && isValidActivity(incoming(), groupId)
+          && incoming().actorUid == request.auth.uid
+          && incoming().createdAt == request.time
+          && (
+            isGroupMember(groupId)
+            || request.auth.uid in getAfter(/databases/$(database)/documents/groups/$(groupId)).data.memberUids
+          );
+        allow update: if false;
+        allow delete: if false;
+      }
+    }
+
+    match /groupInvites/{token} {
+      allow get: if isValidId(token) && isVerifiedUser();
+      allow list: if isVerifiedUser() && resource.data.createdBy == request.auth.uid;
+      allow create: if isValidId(token) && isVerifiedUser()
+        && isValidGroupInvite(incoming())
+        && incoming().token == token
+        && incoming().createdBy == request.auth.uid
+        && incoming().usesCount == 0
+        && incoming().usedBy.size() == 0
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isGroupMember(incoming().groupId);
+      allow update: if isValidId(token) && isVerifiedUser()
+        && isValidGroupInvite(incoming())
+        && incoming().token == existing().token
+        && incoming().groupId == existing().groupId
+        && incoming().groupName == existing().groupName
+        && incoming().createdBy == existing().createdBy
+        && incoming().expiresAt == existing().expiresAt
+        && incoming().maxUses == existing().maxUses
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && existing().usesCount < existing().maxUses
+        && request.time < existing().expiresAt
+        && incoming().usesCount == existing().usesCount + 1
+        && !(request.auth.uid in existing().usedBy)
+        && request.auth.uid in incoming().usedBy
+        && incoming().usedBy.size() == existing().usedBy.size() + 1
+        && incoming().diff(existing()).affectedKeys().hasOnly(['usesCount', 'usedBy', 'updatedAt']);
+      allow delete: if isValidId(token) && isVerifiedUser() && isGroupMember(existing().groupId);
+    }
+
+    match /notifications/{notificationId} {
+      allow get: if isValidId(notificationId) && isVerifiedUser() && resource.data.recipientUid == request.auth.uid;
+      allow list: if isVerifiedUser() && resource.data.recipientUid == request.auth.uid;
+      allow create: if isValidId(notificationId) && isVerifiedUser()
+        && isValidNotification(incoming())
+        && incoming().senderUid == request.auth.uid
+        && incoming().isRead == false
+        && incoming().createdAt == request.time;
+      allow update: if isValidId(notificationId) && isVerifiedUser()
+        && isValidNotification(incoming())
+        && existing().recipientUid == request.auth.uid
+        && incoming().recipientUid == existing().recipientUid
+        && incoming().senderUid == existing().senderUid
+        && incoming().senderName == existing().senderName
+        && incoming().type == existing().type
+        && incoming().title == existing().title
+        && incoming().body == existing().body
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['isRead']);
+      allow delete: if isValidId(notificationId) && isVerifiedUser() && existing().recipientUid == request.auth.uid;
+    }
+  }
+}

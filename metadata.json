@@ -1,0 +1,8 @@
+{
+  "name": "TallyCircle",
+  "description": "Friends expense tracker with multi-group splitting, debt simplification, UPI settlements, analytics, and smart receipt scanning.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

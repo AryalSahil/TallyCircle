@@ -1,0 +1,97 @@
+/**
+ * Payload-First Security TDD Spec for TallyCircle Firestore Rules
+ * Verifies the "Dirty Dozen" adversarial payloads against rule invariants.
+ */
+
+export const DIRTY_DOZEN_CASES = [
+  {
+    name: '1. Unverified email user attempts to create a group',
+    path: '/groups/goa_trip',
+    operation: 'create',
+    auth: { uid: 'u1', token: { email_verified: false } },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '2. Cross-user PII read on /users/{uid}',
+    path: '/users/userA',
+    operation: 'get',
+    auth: { uid: 'userB', token: { email_verified: true } },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '3. User enumeration list query on /userLookup',
+    path: '/userLookup',
+    operation: 'list',
+    auth: { uid: 'userA', token: { email_verified: true } },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '4. Shadow field injection (isAdmin) on /publicProfiles/{uid}',
+    path: '/publicProfiles/userA',
+    operation: 'create',
+    auth: { uid: 'userA', token: { email_verified: true } },
+    payload: { uid: 'userA', displayName: 'Aman', handle: 'aman', isAdmin: true },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '5. Friendship requester spoofing',
+    path: '/friendships/userB_userC',
+    operation: 'create',
+    auth: { uid: 'userA', token: { email_verified: true } },
+    payload: { users: ['userB', 'userC'], requesterUid: 'userB', recipientUid: 'userC', status: 'pending' },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '6. Friendship self-accept on create',
+    path: '/friendships/userA_userB',
+    operation: 'create',
+    auth: { uid: 'userA', token: { email_verified: true } },
+    payload: { users: ['userA', 'userB'], requesterUid: 'userA', recipientUid: 'userB', status: 'accepted' },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '7. Unauthorized group join without atomic invite token',
+    path: '/groups/g1',
+    operation: 'update',
+    auth: { uid: 'userC', token: { email_verified: true } },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '8. Cross-group expense read by non-member',
+    path: '/groups/g1/expenses/e1',
+    operation: 'get',
+    auth: { uid: 'userC', token: { email_verified: true } },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '9. Client timestamp forgery on expense creation',
+    path: '/groups/g1/expenses/e1',
+    operation: 'create',
+    auth: { uid: 'userA', token: { email_verified: true } },
+    payload: { createdAt: '2020-01-01T00:00:00Z' },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '10. Debtor attempting to self-confirm settlement',
+    path: '/groups/g1/settlements/s1',
+    operation: 'update',
+    auth: { uid: 'debtorUid', token: { email_verified: true } },
+    payload: { status: 'confirmed', confirmedBy: 'debtorUid' },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '11. Mutating an already confirmed settlement',
+    path: '/groups/g1/settlements/s_confirmed',
+    operation: 'update',
+    auth: { uid: 'creditorUid', token: { email_verified: true } },
+    payload: { amountPaise: 100 },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '12. Invalid path ID injection',
+    path: '/groups/bad$id!with*chars',
+    operation: 'create',
+    auth: { uid: 'userA', token: { email_verified: true } },
+    expected: 'PERMISSION_DENIED',
+  },
+];

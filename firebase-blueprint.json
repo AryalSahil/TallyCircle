@@ -1,0 +1,275 @@
+{
+  "entities": {
+    "UserPrivateProfile": {
+      "title": "UserPrivateProfile",
+      "description": "Private user account profile containing PII such as email and phone number.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "fullName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "email": { "type": "string", "minLength": 3, "maxLength": 120 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "upiId": { "type": "string", "maxLength": 100 },
+        "photoUrl": { "type": "string", "maxLength": 500 },
+        "handle": { "type": "string", "minLength": 2, "maxLength": 40, "pattern": "^[a-z0-9_]+$" },
+        "theme": { "type": "string", "enum": ["light", "dark", "system"] },
+        "preferredCurrency": { "type": "string", "enum": ["INR", "USD", "EUR", "GBP", "AED", "SGD", "THB"] },
+        "customTags": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "fullName", "email", "handle", "createdAt", "updatedAt"]
+    },
+    "PublicProfile": {
+      "title": "PublicProfile",
+      "description": "Publicly accessible friend/co-member display metadata without private PII.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "handle": { "type": "string", "minLength": 2, "maxLength": 40, "pattern": "^[a-z0-9_]+$" },
+        "photoUrl": { "type": "string", "maxLength": 500 },
+        "upiId": { "type": "string", "maxLength": 100 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "displayName", "handle", "createdAt", "updatedAt"]
+    },
+    "UserLookup": {
+      "title": "UserLookup",
+      "description": "Exact-match lookup record keyed by normalized email or handle for friend discovery.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "handle": { "type": "string", "minLength": 2, "maxLength": 40 },
+        "photoUrl": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "displayName", "handle", "createdAt", "updatedAt"]
+    },
+    "Friendship": {
+      "title": "Friendship",
+      "description": "Bidirectional friendship connection between two registered users.",
+      "type": "object",
+      "properties": {
+        "users": { "type": "array" },
+        "requesterUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "recipientUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "status": { "type": "string", "enum": ["pending", "accepted", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["users", "requesterUid", "recipientUid", "status", "createdAt", "updatedAt"]
+    },
+    "FriendInvite": {
+      "title": "FriendInvite",
+      "description": "Shareable friend invitation token with expiry and usage limit.",
+      "type": "object",
+      "properties": {
+        "token": { "type": "string", "minLength": 6, "maxLength": 128 },
+        "creatorUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "creatorName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "maxUses": { "type": "integer" },
+        "usesCount": { "type": "integer" },
+        "usedBy": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["token", "creatorUid", "creatorName", "expiresAt", "maxUses", "usesCount", "usedBy", "createdAt", "updatedAt"]
+    },
+    "Group": {
+      "title": "Group",
+      "description": "Shared expense group where all active members have equal permissions.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "description": { "type": "string", "maxLength": 500 },
+        "coverImage": { "type": "string", "maxLength": 350000 },
+        "currency": { "type": "string", "enum": ["INR"] },
+        "isArchived": { "type": "boolean" },
+        "startDate": { "type": "string", "maxLength": 20 },
+        "endDate": { "type": "string", "maxLength": 20 },
+        "memberUids": { "type": "array" },
+        "memberNames": { "type": "object" },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "description", "currency", "isArchived", "memberUids", "memberNames", "createdBy", "createdAt", "updatedAt"]
+    },
+    "GroupInvite": {
+      "title": "GroupInvite",
+      "description": "Shareable group invitation token with expiration and usage caps.",
+      "type": "object",
+      "properties": {
+        "token": { "type": "string", "minLength": 6, "maxLength": 128 },
+        "groupId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "groupName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "maxUses": { "type": "integer" },
+        "usesCount": { "type": "integer" },
+        "usedBy": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["token", "groupId", "groupName", "createdBy", "expiresAt", "maxUses", "usesCount", "usedBy", "createdAt", "updatedAt"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Group expense with integer paise splitting, multi-payer support, receipt image, and recurring schedule.",
+      "type": "object",
+      "properties": {
+        "groupId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "description": { "type": "string", "maxLength": 500 },
+        "amountPaise": { "type": "integer" },
+        "currency": { "type": "string", "enum": ["INR", "USD", "EUR", "GBP", "AED", "SGD", "THB"] },
+        "originalAmountMinor": { "type": "integer" },
+        "exchangeRateToInr": { "type": "number" },
+        "tags": { "type": "array" },
+        "category": {
+          "type": "string",
+          "enum": ["Food", "Restaurant", "Travel", "Hotel", "Clubbing", "Shopping", "Entertainment", "Transport", "Fuel", "Tickets", "Other"]
+        },
+        "expenseDate": { "type": "string", "minLength": 4, "maxLength": 40 },
+        "splitMethod": { "type": "string", "enum": ["equal", "unequal", "percentage", "shares"] },
+        "payers": { "type": "array" },
+        "shares": { "type": "array" },
+        "participantUids": { "type": "array" },
+        "payerUids": { "type": "array" },
+        "receiptImage": { "type": "string", "maxLength": 450000 },
+        "isRecurring": { "type": "boolean" },
+        "recurringFrequency": { "type": "string", "enum": ["none", "weekly", "monthly", "custom"] },
+        "recurringIntervalDays": { "type": "integer" },
+        "nextOccurrenceDate": { "type": "string", "maxLength": 40 },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "updatedBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["groupId", "title", "amountPaise", "category", "expenseDate", "splitMethod", "payers", "shares", "participantUids", "payerUids", "isRecurring", "recurringFrequency", "createdBy", "updatedBy", "createdAt", "updatedAt"]
+    },
+    "ExpenseNote": {
+      "title": "ExpenseNote",
+      "description": "Discussion note attached to an expense.",
+      "type": "object",
+      "properties": {
+        "authorUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "authorName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "text": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorUid", "authorName", "text", "createdAt"]
+    },
+    "Settlement": {
+      "title": "Settlement",
+      "description": "External payment settlement record with confirmation workflow.",
+      "type": "object",
+      "properties": {
+        "groupId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "fromUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "fromName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "toUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "toName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "amountPaise": { "type": "integer" },
+        "method": { "type": "string", "enum": ["cash", "upi"] },
+        "upiTransactionRef": { "type": "string", "maxLength": 120 },
+        "note": { "type": "string", "maxLength": 250 },
+        "status": { "type": "string", "enum": ["pending", "awaiting_confirmation", "confirmed", "disputed"] },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "confirmedBy": { "type": "string", "maxLength": 128 },
+        "disputeReason": { "type": "string", "maxLength": 250 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["groupId", "fromUid", "fromName", "toUid", "toName", "amountPaise", "method", "status", "createdBy", "createdAt", "updatedAt"]
+    },
+    "GroupActivity": {
+      "title": "GroupActivity",
+      "description": "Audit log entry of actions inside a group.",
+      "type": "object",
+      "properties": {
+        "groupId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "actorUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "actorName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "type": { "type": "string", "maxLength": 50 },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "relatedId": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["groupId", "actorUid", "actorName", "type", "summary", "createdAt"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Real-time user notification record.",
+      "type": "object",
+      "properties": {
+        "recipientUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "senderUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "senderName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "type": { "type": "string", "maxLength": 50 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "body": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "link": { "type": "string", "maxLength": 200 },
+        "groupId": { "type": "string", "maxLength": 128 },
+        "isRead": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["recipientUid", "senderUid", "senderName", "type", "title", "body", "isRead", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": { "$ref": "#/entities/UserPrivateProfile" },
+      "description": "Private user profile isolated to the owner."
+    },
+    "/publicProfiles/{uid}": {
+      "schema": { "$ref": "#/entities/PublicProfile" },
+      "description": "Public display profile for friends and group members."
+    },
+    "/userLookup/{lookupKey}": {
+      "schema": { "$ref": "#/entities/UserLookup" },
+      "description": "Exact-key lookup for finding registered users by email or handle."
+    },
+    "/friendships/{friendshipId}": {
+      "schema": { "$ref": "#/entities/Friendship" },
+      "description": "Friendship requests and accepted links."
+    },
+    "/friendInvites/{token}": {
+      "schema": { "$ref": "#/entities/FriendInvite" },
+      "description": "Shareable friend invite links."
+    },
+    "/groups/{groupId}": {
+      "schema": { "$ref": "#/entities/Group" },
+      "description": "Shared expense groups."
+    },
+    "/groupInvites/{token}": {
+      "schema": { "$ref": "#/entities/GroupInvite" },
+      "description": "Shareable group invitation tokens."
+    },
+    "/groups/{groupId}/expenses/{expenseId}": {
+      "schema": { "$ref": "#/entities/Expense" },
+      "description": "Expenses within a group."
+    },
+    "/groups/{groupId}/expenses/{expenseId}/notes/{noteId}": {
+      "schema": { "$ref": "#/entities/ExpenseNote" },
+      "description": "Discussion notes on an expense."
+    },
+    "/groups/{groupId}/settlements/{settlementId}": {
+      "schema": { "$ref": "#/entities/Settlement" },
+      "description": "Payment settlement records within a group."
+    },
+    "/groups/{groupId}/activities/{activityId}": {
+      "schema": { "$ref": "#/entities/GroupActivity" },
+      "description": "Activity log entries within a group."
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/Notification" },
+      "description": "User-scoped notifications."
+    }
+  }
+}
