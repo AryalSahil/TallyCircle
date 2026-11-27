@@ -97,7 +97,7 @@ export function GlobalSearchModal({
     <>
       {open && (
         <div
-          className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/60 backdrop-blur-xs p-4 pt-12 sm:pt-20 overflow-y-auto"
+          className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/60 backdrop-blur-xs p-2.5 sm:p-4 pt-6 sm:pt-20 overflow-y-auto"
           onClick={onClose}
           role="dialog"
           aria-modal="true"
@@ -108,15 +108,15 @@ export function GlobalSearchModal({
             onClick={(e) => e.stopPropagation()}
           >
             {/* Search Input Header */}
-            <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 dark:border-slate-800">
+            <div className="flex items-center gap-2 sm:gap-3 px-3.5 sm:px-4 py-2.5 sm:py-3 border-b border-slate-100 dark:border-slate-800">
               <Search className="w-4 h-4 text-slate-400 shrink-0" />
               <input
                 ref={inputRef}
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search expenses across all groups by title, #tag, or participant..."
-                className="flex-1 bg-transparent text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none"
+                placeholder="Search title, #tag, or participant..."
+                className="flex-1 min-w-0 bg-transparent text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none"
               />
               {(query || selectedTag) && (
                 <button
@@ -125,7 +125,7 @@ export function GlobalSearchModal({
                     setQuery('');
                     setSelectedTag('');
                   }}
-                  className="text-xs text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer"
+                  className="text-xs px-2 py-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer shrink-0"
                 >
                   Clear
                 </button>
@@ -134,7 +134,7 @@ export function GlobalSearchModal({
                 type="button"
                 onClick={onClose}
                 aria-label="Close global search"
-                className="h-8 w-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                className="min-w-[36px] min-h-[36px] rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer shrink-0"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -142,8 +142,8 @@ export function GlobalSearchModal({
 
             {/* Quick Tag Filters */}
             {allTags.length > 0 && (
-              <div className="px-4 py-2.5 border-b border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/50 flex items-center gap-1.5 flex-wrap">
-                <span className="text-[11px] font-medium text-slate-400 flex items-center gap-1 mr-1">
+              <div className="px-3.5 sm:px-4 py-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/50 flex items-center gap-1.5 overflow-x-auto no-scrollbar sm:flex-wrap">
+                <span className="text-[11px] font-medium text-slate-400 flex items-center gap-1 mr-1 shrink-0">
                   <Tag className="w-3 h-3" />
                   Tags:
                 </span>
@@ -154,7 +154,7 @@ export function GlobalSearchModal({
                       key={tag}
                       type="button"
                       onClick={() => setSelectedTag(active ? '' : tag)}
-                      className={`px-2 py-0.5 rounded text-xs font-medium transition-colors cursor-pointer ${
+                      className={`px-2 py-1 rounded text-xs font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
                         active
                           ? 'bg-emerald-600 text-white'
                           : 'text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800'
@@ -168,7 +168,7 @@ export function GlobalSearchModal({
             )}
 
             {/* Results List */}
-            <div className="max-h-[60vh] overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+            <div className="max-h-[65dvh] sm:max-h-[60dvh] overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
               {results.length === 0 ? (
                 <div className="py-12 px-6 text-center space-y-1">
                   <p className="text-sm font-medium text-slate-700 dark:text-slate-300">

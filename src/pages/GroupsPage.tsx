@@ -60,12 +60,12 @@ export function GroupsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="inline-flex items-center gap-1 p-1 rounded-lg bg-slate-100 dark:bg-slate-800 w-fit">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
+        <div className="grid grid-cols-2 sm:inline-flex items-center gap-1 p-1 rounded-lg bg-slate-100 dark:bg-slate-800 w-full sm:w-fit">
           <button
             type="button"
             onClick={() => setTab('active')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+            className={`px-3 min-h-[36px] py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
               tab === 'active'
                 ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
@@ -76,7 +76,7 @@ export function GroupsPage() {
           <button
             type="button"
             onClick={() => setTab('archived')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+            className={`px-3 min-h-[36px] py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
               tab === 'archived'
                 ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
@@ -86,12 +86,12 @@ export function GroupsPage() {
           </button>
         </div>
 
-        <div className="flex items-center gap-2.5">
-          <Button variant="outline" size="sm" onClick={() => setJoinOpen(true)}>
+        <div className="grid grid-cols-2 sm:flex items-center gap-2.5">
+          <Button variant="outline" size="sm" onClick={() => setJoinOpen(true)} className="w-full sm:w-auto">
             <Link2 className="w-4 h-4" />
             Join via Link
           </Button>
-          <Button size="sm" onClick={() => setCreateOpen(true)}>
+          <Button size="sm" onClick={() => setCreateOpen(true)} className="w-full sm:w-auto">
             <Plus className="w-4 h-4" />
             Create Group
           </Button>
@@ -117,7 +117,7 @@ export function GroupsPage() {
           }
         />
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
           {list.map((g) => {
             const exps = expensesByGroup[g.id] || [];
             const sts = settlementsByGroup[g.id] || [];

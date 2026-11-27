@@ -658,7 +658,7 @@ export function ExpenseFormModal({
               })}
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2">
               <input
                 type="text"
                 value={newTagInput}
@@ -671,7 +671,7 @@ export function ExpenseFormModal({
                 }}
                 placeholder="Create custom tag (e.g. goa-2026, client-meal)"
                 maxLength={30}
-                className="flex-1 h-9 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                className="flex-1 min-w-0 h-10 sm:h-9 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
               />
               <Button
                 type="button"
@@ -679,6 +679,7 @@ export function ExpenseFormModal({
                 variant="outline"
                 onClick={handleAddCustomTag}
                 disabled={!normalizeExpenseTag(newTagInput)}
+                className="w-full sm:w-auto"
               >
                 <Plus className="w-3.5 h-3.5" />
                 Add Tag
@@ -716,7 +717,7 @@ export function ExpenseFormModal({
             ) : (
               <div className="rounded-lg border border-slate-200 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800">
                 {groupMembers.map((m) => (
-                  <div key={m.uid} className="flex items-center justify-between gap-3 px-3 py-2">
+                  <div key={m.uid} className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-3 px-3 py-2.5">
                     <span className="text-sm text-slate-700 dark:text-slate-200 truncate">
                       {m.name} {m.uid === profile?.uid ? '(You)' : ''}
                     </span>
@@ -729,7 +730,7 @@ export function ExpenseFormModal({
                       onChange={(e) =>
                         setPayerAmounts((prev) => ({ ...prev, [m.uid]: e.target.value }))
                       }
-                      className="w-28 h-8 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2.5 text-right text-sm font-mono-nums text-slate-900 dark:text-slate-100"
+                      className="w-full sm:w-32 h-9 sm:h-8 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2.5 text-right text-sm font-mono-nums text-slate-900 dark:text-slate-100"
                     />
                   </div>
                 ))}
@@ -744,11 +745,11 @@ export function ExpenseFormModal({
 
           {/* Splitting Engine Section */}
           <div className="space-y-3 pt-1 border-t border-slate-100 dark:border-slate-800">
-            <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <label className="text-xs font-medium text-slate-700 dark:text-slate-300">
                 Split method & participants
               </label>
-              <div className="inline-flex items-center gap-1 p-1 rounded-lg bg-slate-100 dark:bg-slate-800">
+              <div className="grid grid-cols-2 sm:inline-flex items-center gap-1 p-1 rounded-lg bg-slate-100 dark:bg-slate-800 w-full sm:w-auto">
                 {(
                   [
                     { id: 'equal', label: 'Equal' },
@@ -761,7 +762,7 @@ export function ExpenseFormModal({
                     key={tab.id}
                     type="button"
                     onClick={() => setSplitMethod(tab.id)}
-                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${
+                    className={`px-2.5 min-h-[34px] py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${
                       splitMethod === tab.id
                         ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
                         : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
@@ -780,21 +781,21 @@ export function ExpenseFormModal({
                 return (
                   <div
                     key={m.uid}
-                    className="flex items-center justify-between gap-3 px-3 py-2.5"
+                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 px-3 py-2.5"
                   >
-                    <label className="flex items-center gap-2.5 min-w-0 cursor-pointer flex-1">
+                    <label className="flex items-center gap-2.5 min-w-0 cursor-pointer flex-1 min-h-[32px]">
                       <input
                         type="checkbox"
                         checked={included}
                         onChange={() => toggleParticipant(m.uid)}
-                        className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                        className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 shrink-0"
                       />
                       <span className="text-sm text-slate-800 dark:text-slate-200 truncate">
                         {m.name} {m.uid === profile?.uid ? '(You)' : ''}
                       </span>
                     </label>
 
-                    <div className="flex items-center gap-3 shrink-0">
+                    <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pl-6 sm:pl-0">
                       {included && splitMethod !== 'equal' && (
                         <input
                           type="number"
@@ -808,10 +809,10 @@ export function ExpenseFormModal({
                           onChange={(e) =>
                             setRawSplitInputs((prev) => ({ ...prev, [m.uid]: e.target.value }))
                           }
-                          className="w-24 h-8 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 text-right text-xs font-mono-nums text-slate-900 dark:text-slate-100"
+                          className="w-28 sm:w-24 h-9 sm:h-8 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 text-right text-xs font-mono-nums text-slate-900 dark:text-slate-100"
                         />
                       )}
-                      <span className="w-24 text-right text-sm font-mono-nums font-medium text-slate-700 dark:text-slate-200">
+                      <span className="sm:w-24 text-right text-sm font-mono-nums font-medium text-slate-700 dark:text-slate-200 ml-auto sm:ml-0">
                         {included && computedShare ? formatINR(computedShare.sharePaise) : '—'}
                       </span>
                     </div>
@@ -873,13 +874,13 @@ export function ExpenseFormModal({
                 <img
                   src={receiptImage}
                   alt="Receipt preview"
-                  className="h-20 w-auto rounded-lg border border-slate-200 dark:border-slate-700 object-cover"
+                  className="max-h-40 w-full sm:w-auto rounded-lg border border-slate-200 dark:border-slate-700 object-contain bg-slate-50 dark:bg-slate-950"
                 />
               )}
             </div>
 
             <div className="space-y-2">
-              <label className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer min-h-[36px]">
                 <input
                   type="checkbox"
                   checked={isRecurring}
@@ -893,7 +894,7 @@ export function ExpenseFormModal({
                   <select
                     value={recurringFrequency}
                     onChange={(e) => setRecurringFrequency(e.target.value as RecurringFrequency)}
-                    className="h-9 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2.5 text-xs text-slate-900 dark:text-slate-100"
+                    className="h-10 sm:h-9 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2.5 text-xs text-slate-900 dark:text-slate-100"
                   >
                     <option value="weekly">Weekly</option>
                     <option value="monthly">Monthly</option>
@@ -906,7 +907,7 @@ export function ExpenseFormModal({
                       max="365"
                       value={recurringIntervalDays}
                       onChange={(e) => setRecurringIntervalDays(e.target.value)}
-                      className="w-20 h-9 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2.5 text-xs font-mono-nums"
+                      className="w-20 h-10 sm:h-9 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2.5 text-xs font-mono-nums"
                     />
                   )}
                 </div>
@@ -914,14 +915,15 @@ export function ExpenseFormModal({
             </div>
           </div>
 
-          <div className="pt-2 flex items-center justify-end gap-2.5">
-            <Button type="button" variant="outline" onClick={onClose}>
+          <div className="pt-2 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2">
+            <Button type="button" variant="outline" onClick={onClose} className="w-full sm:w-auto">
               Cancel
             </Button>
             <Button
               type="submit"
               loading={submitting}
               disabled={!payersResult.isValid || !splitResult.isValid}
+              className="w-full sm:w-auto"
             >
               {editingExpense ? 'Save Changes' : 'Save Expense'}
             </Button>

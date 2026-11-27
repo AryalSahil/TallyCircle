@@ -128,7 +128,7 @@ export function SettlementModal({
       subtitle="Only confirmed payments reduce group balances. External UPI/cash happens outside the app."
     >
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="space-y-1.5">
             <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
               Paid by (sender)
@@ -258,11 +258,11 @@ export function SettlementModal({
           maxLength={250}
         />
 
-        <div className="pt-2 flex items-center justify-end gap-2.5">
-          <Button type="button" variant="outline" onClick={onClose}>
+        <div className="pt-2 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2">
+          <Button type="button" variant="outline" onClick={onClose} className="w-full sm:w-auto">
             Cancel
           </Button>
-          <Button type="submit" loading={submitting}>
+          <Button type="submit" loading={submitting} className="w-full sm:w-auto">
             {profile?.uid === fromUid ? 'Submit for Confirmation' : 'Create Payment Request'}
           </Button>
         </div>

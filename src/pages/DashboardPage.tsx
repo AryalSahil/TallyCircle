@@ -77,8 +77,8 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => setCreateGroupOpen(true)}>
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setCreateGroupOpen(true)} className="w-full sm:w-auto">
             <Layers className="w-4 h-4" />
             Create Group
           </Button>
@@ -87,15 +87,16 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
             size="sm"
             disabled={activeGroups.length === 0}
             onClick={() => setSettleModalGroupId(activeGroups[0]?.id || null)}
+            className="w-full sm:w-auto"
           >
             <Handshake className="w-4 h-4" />
             Settle Up
           </Button>
-          <Button variant="outline" size="sm" onClick={() => navigate('/friends')}>
+          <Button variant="outline" size="sm" onClick={() => navigate('/friends')} className="w-full sm:w-auto">
             <Users className="w-4 h-4" />
             Invite Friend
           </Button>
-          <Button size="sm" onClick={() => onAddExpense()}>
+          <Button size="sm" onClick={() => onAddExpense()} className="w-full sm:w-auto">
             <Plus className="w-4 h-4" />
             Add Expense
           </Button>
@@ -103,58 +104,58 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
       </div>
 
       {/* 4 Key Financial KPIs */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="p-5">
-          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <Card className="p-3.5 sm:p-5 min-w-0">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400 truncate">
             Total group spending
           </p>
-          <p className="mt-2 text-2xl font-bold font-mono-nums text-slate-900 dark:text-white">
+          <p className="mt-1.5 sm:mt-2 text-lg sm:text-2xl font-bold font-mono-nums text-slate-900 dark:text-white truncate">
             {formatAmount(summary.totalAccessibleExpensesPaise)}
           </p>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            Across {groups.length} accessible {groups.length === 1 ? 'group' : 'groups'}
+          <p className="mt-1 text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 truncate">
+            {groups.length} {groups.length === 1 ? 'group' : 'groups'}
           </p>
         </Card>
 
-        <Card className="p-5">
-          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+        <Card className="p-3.5 sm:p-5 min-w-0">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400 truncate">
             Total paid by you
           </p>
-          <p className="mt-2 text-2xl font-bold font-mono-nums text-slate-900 dark:text-white">
+          <p className="mt-1.5 sm:mt-2 text-lg sm:text-2xl font-bold font-mono-nums text-slate-900 dark:text-white truncate">
             {formatAmount(summary.totalPaidByMePaise)}
           </p>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            Direct expense contributions
+          <p className="mt-1 text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 truncate">
+            Direct contributions
           </p>
         </Card>
 
-        <Card className="p-5">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+        <Card className="p-3.5 sm:p-5 min-w-0">
+          <div className="flex items-center justify-between gap-1">
+            <p className="text-xs font-medium text-slate-500 dark:text-slate-400 truncate">
               You are owed
             </p>
-            <ArrowDownLeft className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            <ArrowDownLeft className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
           </div>
-          <p className="mt-2 text-2xl font-bold font-mono-nums text-emerald-600 dark:text-emerald-400">
+          <p className="mt-1.5 sm:mt-2 text-lg sm:text-2xl font-bold font-mono-nums text-emerald-600 dark:text-emerald-400 truncate">
             {formatAmount(summary.totalOwedToMePaise)}
           </p>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            Receivable across groups
+          <p className="mt-1 text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 truncate">
+            Receivables
           </p>
         </Card>
 
-        <Card className="p-5">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+        <Card className="p-3.5 sm:p-5 min-w-0">
+          <div className="flex items-center justify-between gap-1">
+            <p className="text-xs font-medium text-slate-500 dark:text-slate-400 truncate">
               You owe
             </p>
-            <ArrowUpRight className="w-4 h-4 text-red-600 dark:text-red-400" />
+            <ArrowUpRight className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
           </div>
-          <p className="mt-2 text-2xl font-bold font-mono-nums text-red-600 dark:text-red-400">
+          <p className="mt-1.5 sm:mt-2 text-lg sm:text-2xl font-bold font-mono-nums text-red-600 dark:text-red-400 truncate">
             {formatAmount(summary.totalIOwePaise)}
           </p>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            Outstanding payables
+          <p className="mt-1 text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 truncate">
+            Payables
           </p>
         </Card>
       </div>
@@ -264,15 +265,15 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
                       key={exp.id}
                       type="button"
                       onClick={() => navigate(`/groups/${exp.groupId}`)}
-                      className="w-full text-left px-5 py-3.5 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors flex items-center justify-between gap-4 cursor-pointer"
+                      className="w-full text-left px-4 sm:px-5 py-3.5 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors flex items-center justify-between gap-3 cursor-pointer"
                     >
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <p className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0">
+                          <p className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate max-w-full">
                             {exp.title}
                           </p>
                           {exp.tags && exp.tags.length > 0 && (
-                            <span className="text-xs text-emerald-600 dark:text-emerald-400 truncate shrink-0">
+                            <span className="text-xs text-emerald-600 dark:text-emerald-400 truncate max-w-full">
                               {exp.tags.map((t) => `#${t}`).join(' · ')}
                             </span>
                           )}

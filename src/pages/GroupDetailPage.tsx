@@ -342,43 +342,45 @@ export function GroupDetailPage() {
     <div className="space-y-6">
       {/* Group Banner Header */}
       <Card className="overflow-hidden">
-        <div className="h-36 sm:h-44 relative bg-slate-900">
+        <div className="relative min-h-[168px] sm:h-48 bg-slate-900 flex flex-col justify-between p-4 sm:p-5">
           <img
             src={cover}
             alt={group.name}
             referrerPolicy="no-referrer"
-            className="w-full h-full object-cover opacity-80"
+            className="absolute inset-0 w-full h-full object-cover opacity-80"
           />
-          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-slate-950/40 to-transparent" />
-          <div className="absolute top-3 left-3">
+          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-slate-950/45 to-slate-950/25" />
+          <div className="relative z-10">
             <button
               type="button"
               onClick={() => navigate('/groups')}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-slate-950/60 hover:bg-slate-950/80 text-white px-3 py-1.5 text-xs font-medium backdrop-blur-xs cursor-pointer"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-slate-950/65 hover:bg-slate-950/85 text-white px-3 min-h-[36px] py-1.5 text-xs font-medium backdrop-blur-xs cursor-pointer"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
               Groups
             </button>
           </div>
-          <div className="absolute bottom-4 left-5 right-5 flex flex-col sm:flex-row sm:items-end justify-between gap-3 text-white">
+          <div className="relative z-10 flex flex-col sm:flex-row sm:items-end justify-between gap-3 text-white pt-4">
             <div className="min-w-0">
-              <h2 className="font-display text-xl sm:text-2xl font-bold truncate">
+              <h2 className="font-display text-lg sm:text-2xl font-bold break-words line-clamp-2">
                 {group.name}
                 {group.isArchived ? ' (Archived)' : ''}
               </h2>
-              <p className="text-xs sm:text-sm text-slate-200/90 mt-0.5 line-clamp-1">
+              <p className="text-xs sm:text-sm text-slate-200/90 mt-0.5 line-clamp-2">
                 {group.description || `${group.memberUids.length} members · Equal permissions`}
               </p>
             </div>
-            <div className="flex items-center gap-4 shrink-0 text-right">
+            <div className="flex items-center gap-5 shrink-0 sm:text-right">
               <div>
                 <p className="text-[11px] text-slate-300">Total spent</p>
-                <p className="font-mono-nums text-base font-bold">{formatAmount(totalExpenditurePaise)}</p>
+                <p className="font-mono-nums text-sm sm:text-base font-bold">
+                  {formatAmount(totalExpenditurePaise)}
+                </p>
               </div>
               <div>
                 <p className="text-[11px] text-slate-300">Your net</p>
                 <p
-                  className={`font-mono-nums text-base font-bold ${
+                  className={`font-mono-nums text-sm sm:text-base font-bold ${
                     myNet > 0 ? 'text-emerald-400' : myNet < 0 ? 'text-red-400' : 'text-slate-200'
                   }`}
                 >
@@ -389,8 +391,8 @@ export function GroupDetailPage() {
           </div>
         </div>
 
-        <div className="px-5 py-3 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 dark:border-slate-800">
-          <div className="flex items-center gap-1 overflow-x-auto">
+        <div className="px-3.5 sm:px-5 py-3 flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-t border-slate-100 dark:border-slate-800">
+          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pb-0.5 lg:pb-0">
             {(
               [
                 { id: 'expenses', label: `Expenses (${expenses.length})` },
@@ -405,7 +407,7 @@ export function GroupDetailPage() {
                 key={t.id}
                 type="button"
                 onClick={() => setTab(t.id)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                className={`px-3 min-h-[38px] py-1.5 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
                   tab === t.id
                     ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
                     : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -416,12 +418,12 @@ export function GroupDetailPage() {
             ))}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <Button size="sm" variant="outline" onClick={() => setEditGroupOpen(true)}>
+          <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 shrink-0">
+            <Button size="sm" variant="outline" onClick={() => setEditGroupOpen(true)} className="w-full sm:w-auto">
               <Pencil className="w-3.5 h-3.5" />
               Edit
             </Button>
-            <Button size="sm" variant="outline" onClick={() => setConfirmArchiveOpen(true)}>
+            <Button size="sm" variant="outline" onClick={() => setConfirmArchiveOpen(true)} className="w-full sm:w-auto">
               {group.isArchived ? (
                 <>
                   <ArchiveRestore className="w-3.5 h-3.5" />
@@ -441,6 +443,7 @@ export function GroupDetailPage() {
                 setSettlementPrefill({});
                 setSettlementModalOpen(true);
               }}
+              className="w-full sm:w-auto"
             >
               <Handshake className="w-3.5 h-3.5" />
               Settle Up
@@ -451,6 +454,7 @@ export function GroupDetailPage() {
                 setEditingExpense(null);
                 setExpenseFormOpen(true);
               }}
+              className="w-full sm:w-auto"
             >
               <Plus className="w-3.5 h-3.5" />
               Add Expense
@@ -462,9 +466,9 @@ export function GroupDetailPage() {
       {/* TAB 1: EXPENSES */}
       {tab === 'expenses' && (
         <div className="space-y-4">
-          <Card className="p-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-              <div className="relative lg:col-span-2">
+          <Card className="p-3.5 sm:p-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5 sm:gap-3">
+              <div className="relative sm:col-span-2">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                 <input
                   type="text"
@@ -477,7 +481,7 @@ export function GroupDetailPage() {
               <select
                 value={filterCategory}
                 onChange={(e) => setFilterCategory(e.target.value)}
-                className="h-10 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm"
+                className="h-10 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm min-w-0"
               >
                 <option value="ALL">All categories</option>
                 {EXPENSE_CATEGORIES.map((c) => (
@@ -489,7 +493,7 @@ export function GroupDetailPage() {
               <select
                 value={filterTag}
                 onChange={(e) => setFilterTag(e.target.value)}
-                className="h-10 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm"
+                className="h-10 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm min-w-0"
               >
                 <option value="ALL">All tags</option>
                 {groupTags.map((t) => (
@@ -501,7 +505,7 @@ export function GroupDetailPage() {
               <select
                 value={filterMember}
                 onChange={(e) => setFilterMember(e.target.value)}
-                className="h-10 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm"
+                className="h-10 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm min-w-0"
               >
                 <option value="ALL">All members</option>
                 {Object.entries(group.memberNames).map(([uid, name]) => (
@@ -510,20 +514,20 @@ export function GroupDetailPage() {
                   </option>
                 ))}
               </select>
-              <div className="flex items-center gap-2">
+              <div className="grid grid-cols-2 gap-2 sm:col-span-2 lg:col-span-1">
                 <input
                   type="date"
                   value={filterDateFrom}
                   onChange={(e) => setFilterDateFrom(e.target.value)}
                   aria-label="From date"
-                  className="w-full h-10 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 text-xs"
+                  className="w-full min-w-0 h-10 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 text-xs"
                 />
                 <input
                   type="date"
                   value={filterDateTo}
                   onChange={(e) => setFilterDateTo(e.target.value)}
                   aria-label="To date"
-                  className="w-full h-10 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 text-xs"
+                  className="w-full min-w-0 h-10 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 text-xs"
                 />
               </div>
             </div>
@@ -618,7 +622,7 @@ export function GroupDetailPage() {
       {tab === 'balances' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card className="overflow-hidden">
-            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+            <div className="px-4 sm:px-5 py-4 border-b border-slate-100 dark:border-slate-800">
               <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
                 Member ledger summary
               </h3>
@@ -626,7 +630,47 @@ export function GroupDetailPage() {
                 Net Balance = Total Paid − Total Expense Share (reconciles to {formatAmount(0)})
               </p>
             </div>
-            <div className="overflow-x-auto">
+
+            {/* Mobile Stacked Member Balance Cards */}
+            <div className="sm:hidden divide-y divide-slate-100 dark:divide-slate-800">
+              {memberBalances.map((m) => (
+                <div key={m.uid} className="p-4 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">
+                      {m.name} {m.uid === profile?.uid ? '(You)' : ''}
+                    </span>
+                    <span
+                      className={`font-mono-nums text-sm font-bold shrink-0 ${
+                        m.netBalancePaise > 0
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : m.netBalancePaise < 0
+                            ? 'text-red-600 dark:text-red-400'
+                            : 'text-slate-500'
+                      }`}
+                    >
+                      {formatAmount(m.netBalancePaise, { showSign: true })}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                    <span>
+                      Paid:{' '}
+                      <span className="font-mono-nums font-medium text-slate-700 dark:text-slate-200">
+                        {formatAmount(m.expensePaidPaise + m.settlementPaidPaise)}
+                      </span>
+                    </span>
+                    <span>
+                      Share:{' '}
+                      <span className="font-mono-nums font-medium text-slate-700 dark:text-slate-200">
+                        {formatAmount(m.expenseSharePaise + m.settlementReceivedPaise)}
+                      </span>
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Tablet & Desktop Table */}
+            <div className="hidden sm:block overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 dark:bg-slate-800/50 text-xs text-slate-500 dark:text-slate-400">
                   <tr>
@@ -858,7 +902,7 @@ export function GroupDetailPage() {
                     </div>
 
                     {isPayer && st.status === 'pending' && upiLink && (
-                      <div className="sm:hidden p-2 bg-white rounded-lg border border-slate-200 w-fit">
+                      <div className="p-2 bg-white rounded-lg border border-slate-200 w-fit shrink-0">
                         <QRCodeSVG value={upiLink} size={88} />
                       </div>
                     )}
@@ -958,11 +1002,11 @@ export function GroupDetailPage() {
             </div>
 
             {friendsNotInGroup.length > 0 && (
-              <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2">
+              <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center gap-2">
                 <select
                   value={selectedFriendToAdd}
                   onChange={(e) => setSelectedFriendToAdd(e.target.value)}
-                  className="flex-1 h-9 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm"
+                  className="flex-1 min-w-0 h-10 sm:h-9 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm"
                 >
                   <option value="">Select a friend to add...</option>
                   {friendsNotInGroup.map((f) => (
@@ -971,7 +1015,7 @@ export function GroupDetailPage() {
                     </option>
                   ))}
                 </select>
-                <Button size="sm" onClick={handleAddFriend} disabled={!selectedFriendToAdd}>
+                <Button size="sm" onClick={handleAddFriend} disabled={!selectedFriendToAdd} className="w-full sm:w-auto">
                   <UserPlus className="w-3.5 h-3.5" />
                   Add
                 </Button>
@@ -1209,11 +1253,11 @@ export function GroupDetailPage() {
                 placeholder="UTR / Transaction ID"
               />
             )}
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" onClick={() => setPayDialogSt(null)}>
+            <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setPayDialogSt(null)} className="w-full sm:w-auto">
                 Cancel
               </Button>
-              <Button type="submit">Submit Payment</Button>
+              <Button type="submit" className="w-full sm:w-auto">Submit Payment</Button>
             </div>
           </form>
         )}
@@ -1244,11 +1288,11 @@ export function GroupDetailPage() {
               onChange={(e) => setDisputeReason(e.target.value)}
               required
             />
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" onClick={() => setDisputeDialogSt(null)}>
+            <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setDisputeDialogSt(null)} className="w-full sm:w-auto">
                 Cancel
               </Button>
-              <Button type="submit" variant="danger">
+              <Button type="submit" variant="danger" className="w-full sm:w-auto">
                 Confirm Dispute
               </Button>
             </div>

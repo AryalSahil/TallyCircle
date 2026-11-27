@@ -129,11 +129,11 @@ export function InviteJoinPage({ kind }: { kind: 'group' | 'friend' }) {
                 {subtitle}
               </p>
             </div>
-            <div className="flex items-center justify-center gap-3 pt-2">
-              <Button variant="outline" onClick={() => navigate('/')}>
+            <div className="flex flex-col-reverse sm:flex-row items-center justify-center gap-2.5 pt-2">
+              <Button variant="outline" onClick={() => navigate('/')} className="w-full sm:w-auto">
                 Cancel
               </Button>
-              <Button loading={accepting} onClick={handleAccept}>
+              <Button loading={accepting} onClick={handleAccept} className="w-full sm:w-auto">
                 <CheckCircle2 className="w-4 h-4" />
                 {kind === 'group' ? 'Join Group' : 'Accept Invite'}
               </Button>

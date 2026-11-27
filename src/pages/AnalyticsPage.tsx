@@ -210,21 +210,22 @@ export function AnalyticsPage() {
   return (
     <div className="space-y-6">
       {/* Filters & Export Bar */}
-      <Card className="p-4 space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2">
+      <Card className="p-3.5 sm:p-4 space-y-3.5 sm:space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3">
+          <div className="flex items-center gap-2">
             <Button
               size="sm"
               variant="outline"
               onClick={handleGenerateBrief}
               loading={loadingBrief}
               disabled={filteredExpenses.length === 0}
+              className="w-full sm:w-auto"
             >
               <Zap className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
               Spending Brief
             </Button>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="grid grid-cols-2 sm:flex items-center gap-2">
             <Button
               size="sm"
               variant="outline"
@@ -238,6 +239,7 @@ export function AnalyticsPage() {
                 });
                 showToast('PDF report downloaded', { variant: 'success' });
               }}
+              className="w-full sm:w-auto"
             >
               <Download className="w-3.5 h-3.5" />
               Export PDF
@@ -255,6 +257,7 @@ export function AnalyticsPage() {
                 });
                 showToast('Excel report downloaded', { variant: 'success' });
               }}
+              className="w-full sm:w-auto"
             >
               <FileSpreadsheet className="w-3.5 h-3.5" />
               Export Excel
@@ -339,29 +342,29 @@ export function AnalyticsPage() {
       </Card>
 
       {/* Metrics Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="p-5">
-          <p className="text-xs text-slate-500 dark:text-slate-400">Filtered total spent</p>
-          <p className="mt-1.5 text-2xl font-bold font-mono-nums text-slate-900 dark:text-white">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <Card className="p-3.5 sm:p-5 min-w-0">
+          <p className="text-xs text-slate-500 dark:text-slate-400 truncate">Filtered total spent</p>
+          <p className="mt-1.5 text-lg sm:text-2xl font-bold font-mono-nums text-slate-900 dark:text-white truncate">
             {formatAmount(stats.totalPaise)}
           </p>
-          <p className="mt-1 text-xs text-slate-500">{filteredExpenses.length} expenses</p>
+          <p className="mt-1 text-[11px] sm:text-xs text-slate-500">{filteredExpenses.length} expenses</p>
         </Card>
-        <Card className="p-5">
-          <p className="text-xs text-slate-500 dark:text-slate-400">Highest single expense</p>
-          <p className="mt-1.5 text-2xl font-bold font-mono-nums text-slate-900 dark:text-white">
+        <Card className="p-3.5 sm:p-5 min-w-0">
+          <p className="text-xs text-slate-500 dark:text-slate-400 truncate">Highest single</p>
+          <p className="mt-1.5 text-lg sm:text-2xl font-bold font-mono-nums text-slate-900 dark:text-white truncate">
             {formatAmount(stats.highestPaise)}
           </p>
         </Card>
-        <Card className="p-5">
-          <p className="text-xs text-slate-500 dark:text-slate-400">Average expense</p>
-          <p className="mt-1.5 text-2xl font-bold font-mono-nums text-slate-900 dark:text-white">
+        <Card className="p-3.5 sm:p-5 min-w-0">
+          <p className="text-xs text-slate-500 dark:text-slate-400 truncate">Average expense</p>
+          <p className="mt-1.5 text-lg sm:text-2xl font-bold font-mono-nums text-slate-900 dark:text-white truncate">
             {formatAmount(stats.averagePaise)}
           </p>
         </Card>
-        <Card className="p-5">
-          <p className="text-xs text-slate-500 dark:text-slate-400">Confirmed settlements</p>
-          <p className="mt-1.5 text-2xl font-bold font-mono-nums text-emerald-600 dark:text-emerald-400">
+        <Card className="p-3.5 sm:p-5 min-w-0">
+          <p className="text-xs text-slate-500 dark:text-slate-400 truncate">Confirmed settlements</p>
+          <p className="mt-1.5 text-lg sm:text-2xl font-bold font-mono-nums text-emerald-600 dark:text-emerald-400 truncate">
             {formatAmount(stats.confirmedSettlementPaise)}
           </p>
         </Card>
@@ -374,10 +377,10 @@ export function AnalyticsPage() {
           description="Log group expenses or adjust your date, category, tag, or group filters to visualize trends."
         />
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
           {/* Spending Trend */}
-          <Card className="p-5 space-y-4">
-            <div className="flex items-center justify-between">
+          <Card className="p-4 sm:p-5 space-y-3 sm:space-y-4 min-w-0">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
                 Spending trend ({baseCurrency})
               </h3>
@@ -398,12 +401,12 @@ export function AnalyticsPage() {
                 ))}
               </div>
             </div>
-            <div className="h-64">
+            <div className="h-56 sm:h-64 w-full min-w-0">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={trendData}>
+                <AreaChart data={trendData} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#94a3b8" opacity={0.2} />
-                  <XAxis dataKey="period" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} />
+                  <XAxis dataKey="period" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+                  <YAxis tick={{ fontSize: 10 }} width={52} />
                   <Tooltip
                     formatter={(val) =>
                       `${currencySymbol}${Number(val || 0).toLocaleString(SUPPORTED_CURRENCIES[baseCurrency].locale)}`
@@ -423,16 +426,16 @@ export function AnalyticsPage() {
           </Card>
 
           {/* Category Breakdown */}
-          <Card className="p-5 space-y-4">
+          <Card className="p-4 sm:p-5 space-y-3 sm:space-y-4 min-w-0">
             <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
               Category-wise spending ({baseCurrency})
             </h3>
-            <div className="h-64">
+            <div className="h-56 sm:h-64 w-full min-w-0">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={categoryData}>
+                <BarChart data={categoryData} margin={{ top: 8, right: 8, left: -12, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#94a3b8" opacity={0.2} />
-                  <XAxis dataKey="category" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} />
+                  <XAxis dataKey="category" tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={42} />
+                  <YAxis tick={{ fontSize: 10 }} width={52} />
                   <Tooltip
                     formatter={(val) =>
                       `${currencySymbol}${Number(val || 0).toLocaleString(SUPPORTED_CURRENCIES[baseCurrency].locale)}`
@@ -449,16 +452,16 @@ export function AnalyticsPage() {
           </Card>
 
           {/* Group-wise Spending */}
-          <Card className="p-5 space-y-4">
+          <Card className="p-4 sm:p-5 space-y-3 sm:space-y-4 min-w-0">
             <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
               Group-wise spending ({baseCurrency})
             </h3>
-            <div className="h-64">
+            <div className="h-56 sm:h-64 w-full min-w-0">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={groupData} layout="vertical">
+                <BarChart data={groupData} layout="vertical" margin={{ top: 4, right: 12, left: 0, bottom: 4 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#94a3b8" opacity={0.2} />
-                  <XAxis type="number" tick={{ fontSize: 11 }} />
-                  <YAxis dataKey="groupName" type="category" width={110} tick={{ fontSize: 11 }} />
+                  <XAxis type="number" tick={{ fontSize: 10 }} />
+                  <YAxis dataKey="groupName" type="category" width={88} tick={{ fontSize: 10 }} />
                   <Tooltip
                     formatter={(val) =>
                       `${currencySymbol}${Number(val || 0).toLocaleString(SUPPORTED_CURRENCIES[baseCurrency].locale)}`
@@ -471,16 +474,16 @@ export function AnalyticsPage() {
           </Card>
 
           {/* Member-wise Contributions */}
-          <Card className="p-5 space-y-4">
+          <Card className="p-4 sm:p-5 space-y-3 sm:space-y-4 min-w-0">
             <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
               Member-wise paid contributions ({baseCurrency})
             </h3>
-            <div className="h-64">
+            <div className="h-56 sm:h-64 w-full min-w-0">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={memberContribData}>
+                <BarChart data={memberContribData} margin={{ top: 8, right: 8, left: -12, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#94a3b8" opacity={0.2} />
-                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} />
+                  <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-15} textAnchor="end" height={40} />
+                  <YAxis tick={{ fontSize: 10 }} width={52} />
                   <Tooltip
                     formatter={(val) =>
                       `${currencySymbol}${Number(val || 0).toLocaleString(SUPPORTED_CURRENCIES[baseCurrency].locale)}`

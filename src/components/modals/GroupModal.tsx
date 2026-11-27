@@ -147,7 +147,7 @@ export function GroupModal({
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <InputField
             label="Trip start date (optional)"
             type="date"
@@ -173,7 +173,7 @@ export function GroupModal({
               <input type="file" accept="image/*" onChange={handleCoverUpload} className="hidden" />
             </label>
           </div>
-          <div className="grid grid-cols-3 gap-2.5">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
             {GROUP_COVER_PRESETS.map((preset) => {
               const active = coverImage === preset.url;
               return (
@@ -241,11 +241,11 @@ export function GroupModal({
           </div>
         )}
 
-        <div className="pt-2 flex items-center justify-end gap-2.5">
-          <Button type="button" variant="outline" onClick={onClose}>
+        <div className="pt-2 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2">
+          <Button type="button" variant="outline" onClick={onClose} className="w-full sm:w-auto">
             Cancel
           </Button>
-          <Button type="submit" loading={submitting}>
+          <Button type="submit" loading={submitting} className="w-full sm:w-auto">
             {editingGroup ? 'Save Changes' : 'Create Group'}
           </Button>
         </div>

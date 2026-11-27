@@ -175,10 +175,10 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     });
   }, [profile?.uid, friendships, groups]);
 
-  const refreshProfiles = async (uids: string[]) => {
+  const refreshProfiles = React.useCallback(async (uids: string[]) => {
     const loaded = await getPublicProfiles(uids);
     setProfilesMap((prev) => ({ ...prev, ...loaded }));
-  };
+  }, []);
 
   const activeGroups = useMemo(() => groups.filter((g) => !g.isArchived), [groups]);
   const archivedGroups = useMemo(() => groups.filter((g) => g.isArchived), [groups]);
@@ -266,25 +266,43 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     };
   }, [groups, expensesByGroup, settlementsByGroup, activitiesByGroup, profile?.uid]);
 
+  const contextValue = useMemo<AppDataContextValue>(
+    () => ({
+      groups,
+      activeGroups,
+      archivedGroups,
+      expensesByGroup,
+      settlementsByGroup,
+      activitiesByGroup,
+      friendships,
+      acceptedFriendUids,
+      profilesMap,
+      notifications,
+      unreadNotificationsCount,
+      loadingData,
+      summary,
+      refreshProfiles,
+    }),
+    [
+      groups,
+      activeGroups,
+      archivedGroups,
+      expensesByGroup,
+      settlementsByGroup,
+      activitiesByGroup,
+      friendships,
+      acceptedFriendUids,
+      profilesMap,
+      notifications,
+      unreadNotificationsCount,
+      loadingData,
+      summary,
+      refreshProfiles,
+    ]
+  );
+
   return (
-    <AppDataContext.Provider
-      value={{
-        groups,
-        activeGroups,
-        archivedGroups,
-        expensesByGroup,
-        settlementsByGroup,
-        activitiesByGroup,
-        friendships,
-        acceptedFriendUids,
-        profilesMap,
-        notifications,
-        unreadNotificationsCount,
-        loadingData,
-        summary,
-        refreshProfiles,
-      }}
-    >
+    <AppDataContext.Provider value={contextValue}>
       {children}
     </AppDataContext.Provider>
   );

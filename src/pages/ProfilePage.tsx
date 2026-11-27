@@ -97,14 +97,14 @@ export function ProfilePage() {
 
   return (
     <div className="max-w-2xl space-y-6">
-      <Card className="p-6 space-y-6">
-        <div className="flex items-center gap-4">
+      <Card className="p-4 sm:p-6 space-y-5 sm:space-y-6">
+        <div className="flex items-center gap-3.5 sm:gap-4">
           <Avatar name={profile.fullName} photoUrl={photoUrl || profile.photoUrl} size="lg" />
           <div className="min-w-0">
             <h2 className="font-display text-lg font-bold text-slate-900 dark:text-white truncate">
               {profile.fullName}
             </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
+            <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
               {profile.email} · Joined{' '}
               {profile.createdAt?.toDate?.().toLocaleDateString('en-IN') || 'Recently'}
             </p>
@@ -205,20 +205,21 @@ export function ProfilePage() {
             </p>
           </div>
 
-          <form onSubmit={handleAddTag} className="flex items-center gap-2">
+          <form onSubmit={handleAddTag} className="flex flex-col sm:flex-row sm:items-center gap-2">
             <input
               type="text"
               value={newTagInput}
               onChange={(e) => setNewTagInput(e.target.value)}
               placeholder="New tag (e.g. tax-deductible)"
               maxLength={30}
-              className="flex-1 h-9 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+              className="flex-1 min-w-0 h-10 sm:h-9 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
             />
             <Button
               type="submit"
               size="sm"
               loading={savingTag}
               disabled={!normalizeExpenseTag(newTagInput)}
+              className="w-full sm:w-auto"
             >
               <Plus className="w-3.5 h-3.5" />
               Add Tag
@@ -233,7 +234,7 @@ export function ProfilePage() {
                   type="button"
                   onClick={() => handleRemoveTag(tag)}
                   title={`Remove #${tag}`}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-300 hover:border-red-300 hover:text-red-600 dark:hover:text-red-400 transition-colors cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-2.5 min-h-[34px] py-1 rounded-md border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-300 hover:border-red-300 hover:text-red-600 dark:hover:text-red-400 transition-colors cursor-pointer"
                 >
                   <span>#{tag}</span>
                   <X className="w-3 h-3" />
@@ -244,7 +245,7 @@ export function ProfilePage() {
         </div>
       </Card>
 
-      <Card className="p-6 space-y-4">
+      <Card className="p-4 sm:p-6 space-y-4">
         <div>
           <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Appearance</h3>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
@@ -252,13 +253,13 @@ export function ProfilePage() {
           </p>
         </div>
 
-        <div className="inline-flex p-1 rounded-lg bg-slate-100 dark:bg-slate-800">
+        <div className="grid grid-cols-3 sm:inline-flex p-1 rounded-lg bg-slate-100 dark:bg-slate-800 w-full sm:w-fit">
           {(['light', 'dark', 'system'] as ThemePreference[]).map((opt) => (
             <button
               key={opt}
               type="button"
               onClick={() => setTheme(opt)}
-              className={`px-4 py-1.5 rounded-md text-xs font-medium capitalize transition-colors cursor-pointer ${
+              className={`px-3 sm:px-4 min-h-[36px] py-1.5 rounded-md text-xs font-medium capitalize transition-colors cursor-pointer ${
                 theme === opt
                   ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
                   : 'text-slate-600 dark:text-slate-400'
@@ -269,11 +270,11 @@ export function ProfilePage() {
           ))}
         </div>
 
-        <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center">
-          <span className="text-xs text-slate-500 dark:text-slate-400">
+        <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+          <span className="text-xs text-slate-500 dark:text-slate-400 truncate">
             Signed in as {profile.email}
           </span>
-          <Button variant="outline" size="sm" onClick={logout}>
+          <Button variant="outline" size="sm" onClick={logout} className="w-full sm:w-auto">
             <LogOut className="w-4 h-4" />
             Sign Out
           </Button>

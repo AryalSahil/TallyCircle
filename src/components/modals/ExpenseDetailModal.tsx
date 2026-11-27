@@ -93,8 +93,8 @@ export function ExpenseDetailModal({
         maxWidth="max-w-xl"
       >
         <div className="space-y-5">
-          <div className="flex items-baseline justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
-            <div>
+          <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-3 sm:gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
+            <div className="min-w-0">
               <p className="text-xs text-slate-500 dark:text-slate-400">Total expense</p>
               <p className="text-2xl font-bold font-mono-nums text-slate-900 dark:text-white mt-0.5">
                 {formatAmount(expense.amountPaise)}
@@ -105,7 +105,7 @@ export function ExpenseDetailModal({
                 const rate = expense.exchangeRateToInr || 1;
                 if (origCurr !== 'INR' || baseCurrency !== 'INR') {
                   return (
-                    <p className="mt-1 text-xs font-mono-nums text-slate-500 dark:text-slate-400">
+                    <p className="mt-1 text-xs font-mono-nums text-slate-500 dark:text-slate-400 break-words">
                       Original: {formatOriginalCurrency(origMinor, origCurr)}
                       {origCurr !== 'INR' ? ` · Rate at entry: 1 ${origCurr} = ₹${rate}` : ''}
                       {baseCurrency !== 'INR' ? ` · ${formatINR(expense.amountPaise)}` : ''}
@@ -115,7 +115,7 @@ export function ExpenseDetailModal({
                 return null;
               })()}
               {expense.tags && expense.tags.length > 0 && (
-                <p className="mt-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                <p className="mt-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400 break-words">
                   {expense.tags.map((t) => `#${t}`).join(' · ')}
                 </p>
               )}
@@ -127,7 +127,7 @@ export function ExpenseDetailModal({
                 </p>
               )}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="grid grid-cols-2 sm:flex items-center gap-2 shrink-0">
               <Button
                 size="sm"
                 variant="outline"
@@ -135,6 +135,7 @@ export function ExpenseDetailModal({
                   onClose();
                   onEdit(expense);
                 }}
+                className="w-full sm:w-auto"
               >
                 <Pencil className="w-3.5 h-3.5" />
                 Edit
@@ -142,7 +143,7 @@ export function ExpenseDetailModal({
               <Button
                 size="sm"
                 variant="ghost"
-                className="text-red-600 dark:text-red-400"
+                className="text-red-600 dark:text-red-400 w-full sm:w-auto"
                 onClick={() => setConfirmDeleteOpen(true)}
               >
                 <Trash2 className="w-3.5 h-3.5" />
@@ -250,16 +251,16 @@ export function ExpenseDetailModal({
               </div>
             )}
 
-            <form onSubmit={handleAddNote} className="flex items-center gap-2">
+            <form onSubmit={handleAddNote} className="flex flex-col sm:flex-row sm:items-center gap-2">
               <input
                 type="text"
                 value={noteInput}
                 onChange={(e) => setNoteInput(e.target.value)}
                 maxLength={500}
                 placeholder="Add a note or question about this bill..."
-                className="flex-1 h-9 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                className="flex-1 min-w-0 h-10 sm:h-9 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
               />
-              <Button type="submit" size="sm" loading={sendingNote} disabled={!noteInput.trim()}>
+              <Button type="submit" size="sm" loading={sendingNote} disabled={!noteInput.trim()} className="w-full sm:w-auto">
                 <Send className="w-3.5 h-3.5" />
                 Send
               </Button>

@@ -45,7 +45,7 @@ export function NotificationsPage() {
           {notifications.map((n) => (
             <div
               key={n.id}
-              className={`px-5 py-4 flex items-start justify-between gap-4 transition-colors ${
+              className={`px-4 sm:px-5 py-3.5 sm:py-4 flex items-start justify-between gap-3 sm:gap-4 transition-colors ${
                 !n.isRead ? 'bg-emerald-50/40 dark:bg-emerald-950/20' : ''
               }`}
             >
@@ -57,9 +57,9 @@ export function NotificationsPage() {
                 }}
                 className="text-left flex-1 min-w-0 cursor-pointer"
               >
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <p
-                    className={`text-sm ${
+                    className={`text-sm break-words ${
                       n.isRead
                         ? 'font-medium text-slate-800 dark:text-slate-200'
                         : 'font-semibold text-slate-900 dark:text-white'
@@ -73,7 +73,7 @@ export function NotificationsPage() {
                     </span>
                   )}
                 </div>
-                <p className="text-sm text-slate-600 dark:text-slate-300 mt-0.5 leading-relaxed">
+                <p className="text-sm text-slate-600 dark:text-slate-300 mt-0.5 leading-relaxed break-words">
                   {n.body}
                 </p>
                 <p className="text-xs text-slate-400 mt-1">
@@ -85,7 +85,7 @@ export function NotificationsPage() {
                 type="button"
                 aria-label="Delete notification"
                 onClick={() => deleteNotification(n.id)}
-                className="p-2 text-slate-400 hover:text-red-500 rounded-lg cursor-pointer shrink-0"
+                className="min-w-[40px] min-h-[40px] flex items-center justify-center text-slate-400 hover:text-red-500 rounded-lg cursor-pointer shrink-0"
               >
                 <Trash2 className="w-4 h-4" />
               </button>

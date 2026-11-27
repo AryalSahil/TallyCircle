@@ -1,11 +1,113 @@
-import React, { useState } from 'react';
-import { ReceiptIndianRupee, Mail, Lock, User, ArrowRight, RefreshCw, CheckCircle2 } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import {
+  ReceiptIndianRupee,
+  Mail,
+  ArrowRight,
+  RefreshCw,
+  CheckCircle2,
+  AlertCircle,
+  Copy,
+  Check,
+} from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { AUTH_EDITORIAL_IMAGE } from '../utils/helpers';
 import { Button, InputField } from '../components/ui/Primitives';
 
 type AuthMode = 'signin' | 'signup' | 'forgot';
+
+interface ParsedAuthError {
+  code: string;
+  message: string;
+  isUnauthorizedDomain: boolean;
+}
+
+function parseAuthError(err: unknown, currentHost: string): ParsedAuthError {
+  const code = (err as { code?: string })?.code || '';
+  if (code === 'auth/unauthorized-domain') {
+    return {
+      code,
+      isUnauthorizedDomain: true,
+      message: `The current domain (${currentHost || 'unknown host'}) is not yet authorized for Firebase Authentication.`,
+    };
+  }
+  if (code === 'auth/operation-not-allowed') {
+    return {
+      code,
+      isUnauthorizedDomain: false,
+      message:
+        'This sign-in method is not enabled in Firebase Authentication > Sign-in method yet.',
+    };
+  }
+  if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found') {
+    return {
+      code,
+      isUnauthorizedDomain: false,
+      message: 'Incorrect email or password.',
+    };
+  }
+  if (code === 'auth/email-already-in-use') {
+    return {
+      code,
+      isUnauthorizedDomain: false,
+      message: 'An account with this email already exists.',
+    };
+  }
+  if (code === 'auth/weak-password') {
+    return {
+      code,
+      isUnauthorizedDomain: false,
+      message: 'Password must be at least 6 characters.',
+    };
+  }
+  if (code === 'auth/popup-closed-by-user') {
+    return {
+      code,
+      isUnauthorizedDomain: false,
+      message: 'Google sign-in window was closed before completing.',
+    };
+  }
+  if (code === 'auth/cancelled-popup-request') {
+    return {
+      code,
+      isUnauthorizedDomain: false,
+      message: 'A previous Google sign-in window is already open. Complete or close it first.',
+    };
+  }
+  if (code === 'auth/popup-blocked') {
+    return {
+      code,
+      isUnauthorizedDomain: false,
+      message: 'Sign-in popup was blocked by your browser. Redirecting or allow popups for this site.',
+    };
+  }
+  if (code === 'auth/account-exists-with-different-credential') {
+    return {
+      code,
+      isUnauthorizedDomain: false,
+      message: 'An account already exists with this email using email/password sign-in.',
+    };
+  }
+  if (code === 'auth/network-request-failed') {
+    return {
+      code,
+      isUnauthorizedDomain: false,
+      message: 'Network error while contacting Firebase Authentication. Check your connection and retry.',
+    };
+  }
+  if (code === 'auth/too-many-requests') {
+    return {
+      code,
+      isUnauthorizedDomain: false,
+      message: 'Too many sign-in attempts. Please wait a moment and try again.',
+    };
+  }
+  return {
+    code,
+    isUnauthorizedDomain: false,
+    message: err instanceof Error ? err.message : 'Authentication failed.',
+  };
+}
 
 export function AuthPage() {
   const {
@@ -17,6 +119,8 @@ export function AuthPage() {
     firebaseUser,
     resendVerification,
     refreshVerificationStatus,
+    redirectAuthError,
+    clearRedirectAuthError,
     logout,
   } = useAuth();
   const { showToast } = useToast();
@@ -28,33 +132,43 @@ export function AuthPage() {
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [resetSent, setResetSent] = useState(false);
+  const [authAlert, setAuthAlert] = useState<ParsedAuthError | null>(null);
+  const [copiedHost, setCopiedHost] = useState(false);
 
-  const mapAuthError = (err: unknown): string => {
-    const code = (err as { code?: string })?.code || '';
-    if (code === 'auth/operation-not-allowed') {
-      return 'Email/password sign-in is not enabled in Firebase Console yet. Enable it under Authentication > Sign-in method, or use Google Sign-In above.';
+  const currentHost =
+    typeof window !== 'undefined' ? window.location.hostname : '';
+
+  useEffect(() => {
+    if (!redirectAuthError) return;
+    const parsed = parseAuthError(redirectAuthError, currentHost);
+    setAuthAlert(parsed);
+    showToast('Google sign-in failed', { description: parsed.message, variant: 'error' });
+    clearRedirectAuthError();
+  }, [redirectAuthError, currentHost, showToast, clearRedirectAuthError]);
+
+  const handleCopyHost = async () => {
+    if (!currentHost) return;
+    try {
+      await navigator.clipboard.writeText(currentHost);
+      setCopiedHost(true);
+      setTimeout(() => setCopiedHost(false), 2000);
+    } catch {
+      showToast('Copy failed', { variant: 'error' });
     }
-    if (code === 'auth/invalid-credential' || code === 'auth/wrong-password') {
-      return 'Incorrect email or password.';
-    }
-    if (code === 'auth/email-already-in-use') {
-      return 'An account with this email already exists.';
-    }
-    if (code === 'auth/weak-password') {
-      return 'Password must be at least 6 characters.';
-    }
-    if (code === 'auth/popup-closed-by-user') {
-      return 'Sign-in window was closed before completing.';
-    }
-    return err instanceof Error ? err.message : 'Authentication failed.';
   };
 
   const handleGoogle = async () => {
+    setAuthAlert(null);
     setGoogleLoading(true);
     try {
-      await signInWithGoogle();
+      const flow = await signInWithGoogle();
+      if (flow === 'redirect') {
+        showToast('Redirecting to Google sign-in...', { variant: 'info' });
+      }
     } catch (err) {
-      showToast('Google sign-in failed', { description: mapAuthError(err), variant: 'error' });
+      const parsed = parseAuthError(err, currentHost);
+      setAuthAlert(parsed);
+      showToast('Google sign-in failed', { description: parsed.message, variant: 'error' });
     } finally {
       setGoogleLoading(false);
     }
@@ -62,6 +176,7 @@ export function AuthPage() {
 
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setAuthAlert(null);
     setLoading(true);
     try {
       if (mode === 'signin') {
@@ -86,7 +201,9 @@ export function AuthPage() {
         });
       }
     } catch (err) {
-      showToast('Authentication error', { description: mapAuthError(err), variant: 'error' });
+      const parsed = parseAuthError(err, currentHost);
+      setAuthAlert(parsed);
+      showToast('Authentication error', { description: parsed.message, variant: 'error' });
     } finally {
       setLoading(false);
     }
@@ -94,8 +211,8 @@ export function AuthPage() {
 
   if (needsEmailVerification && firebaseUser) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-6">
-        <div className="max-w-md w-full rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 sm:p-8 space-y-5">
+      <div className="min-h-[100dvh] flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4 sm:p-6">
+        <div className="max-w-md w-full rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-8 space-y-5">
           <div className="w-11 h-11 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
             <Mail className="w-5 h-5" />
           </div>
@@ -103,9 +220,9 @@ export function AuthPage() {
             <h1 className="font-display text-xl font-bold text-slate-900 dark:text-white">
               Verify your email address
             </h1>
-            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300 leading-relaxed break-words">
               We sent a verification link to{' '}
-              <span className="font-medium text-slate-900 dark:text-white">
+              <span className="font-medium text-slate-900 dark:text-white break-all">
                 {firebaseUser.email}
               </span>
               . Click the link in your inbox, then press continue below.
@@ -142,7 +259,7 @@ export function AuthPage() {
                   showToast('Verification email resent', { variant: 'success' });
                 } catch (err) {
                   showToast('Could not resend email', {
-                    description: mapAuthError(err),
+                    description: parseAuthError(err, currentHost).message,
                     variant: 'error',
                   });
                 }
@@ -161,11 +278,11 @@ export function AuthPage() {
   }
 
   return (
-    <div className="min-h-screen grid grid-cols-1 lg:grid-cols-2 bg-slate-50 dark:bg-slate-950">
-      <div className="flex items-center justify-center p-6 sm:p-10">
-        <div className="w-full max-w-md space-y-6">
+    <div className="min-h-[100dvh] grid grid-cols-1 lg:grid-cols-2 bg-slate-50 dark:bg-slate-950">
+      <div className="flex items-center justify-center px-4 py-8 sm:p-10">
+        <div className="w-full max-w-md space-y-5 sm:space-y-6">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-lg bg-emerald-600 dark:bg-emerald-500 flex items-center justify-center text-white dark:text-slate-950">
+            <div className="w-9 h-9 rounded-lg bg-emerald-600 dark:bg-emerald-500 flex items-center justify-center text-white dark:text-slate-950 shrink-0">
               <ReceiptIndianRupee className="w-5 h-5" />
             </div>
             <span className="font-display text-xl font-bold text-slate-900 dark:text-white">
@@ -186,15 +303,48 @@ export function AuthPage() {
             </p>
           </div>
 
+          {authAlert && (
+            <div
+              role="alert"
+              className="rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50/80 dark:bg-red-950/30 p-3.5 text-xs text-red-800 dark:text-red-200 space-y-2"
+            >
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+                <p className="leading-relaxed">{authAlert.message}</p>
+              </div>
+              {authAlert.isUnauthorizedDomain && currentHost && (
+                <div className="pt-1 pl-6 space-y-2">
+                  <p className="text-[11px] text-red-700 dark:text-red-300">
+                    Add this hostname in Firebase Console → Authentication → Settings → Authorized domains:
+                  </p>
+                  <div className="flex items-center justify-between gap-2 rounded-lg border border-red-200 dark:border-red-800/80 bg-white dark:bg-slate-900 px-2.5 py-1.5">
+                    <code className="font-mono-nums text-[11px] text-slate-900 dark:text-slate-100 truncate">
+                      {currentHost}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={handleCopyHost}
+                      className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-400 hover:underline shrink-0 cursor-pointer"
+                    >
+                      {copiedHost ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                      {copiedHost ? 'Copied' : 'Copy'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <Button
             type="button"
             variant="outline"
             size="lg"
-            className="w-full"
+            className="w-full min-h-[44px]"
             loading={googleLoading}
+            disabled={loading}
             onClick={handleGoogle}
           >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true">
+            <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
               <path
                 fill="#4285F4"
                 d="M23.745 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-8.97z"
@@ -212,7 +362,7 @@ export function AuthPage() {
                 d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96z"
               />
             </svg>
-            Continue with Google
+            {googleLoading ? 'Signing in with Google...' : 'Continue with Google'}
           </Button>
 
           <div className="relative flex items-center">
@@ -223,16 +373,14 @@ export function AuthPage() {
 
           <form onSubmit={handleEmailSubmit} className="space-y-4">
             {mode === 'signup' && (
-              <div className="relative">
-                <InputField
-                  label="Full name"
-                  type="text"
-                  placeholder="Aman Verma"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  required
-                />
-              </div>
+              <InputField
+                label="Full name"
+                type="text"
+                placeholder="Aman Verma"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                required
+              />
             )}
 
             <InputField
@@ -262,7 +410,13 @@ export function AuthPage() {
               </p>
             )}
 
-            <Button type="submit" size="lg" className="w-full" loading={loading}>
+            <Button
+              type="submit"
+              size="lg"
+              className="w-full min-h-[44px]"
+              loading={loading}
+              disabled={googleLoading}
+            >
               {mode === 'signin'
                 ? 'Sign In'
                 : mode === 'signup'
@@ -277,18 +431,22 @@ export function AuthPage() {
               <>
                 <button
                   type="button"
-                  onClick={() => setMode('signup')}
-                  className="hover:text-slate-900 dark:hover:text-white font-medium cursor-pointer"
+                  onClick={() => {
+                    setAuthAlert(null);
+                    setMode('signup');
+                  }}
+                  className="py-1.5 hover:text-slate-900 dark:hover:text-white font-medium cursor-pointer"
                 >
                   New here? Create an account
                 </button>
                 <button
                   type="button"
                   onClick={() => {
+                    setAuthAlert(null);
                     setResetSent(false);
                     setMode('forgot');
                   }}
-                  className="hover:text-slate-900 dark:hover:text-white cursor-pointer"
+                  className="py-1.5 hover:text-slate-900 dark:hover:text-white cursor-pointer"
                 >
                   Forgot password?
                 </button>
@@ -296,8 +454,11 @@ export function AuthPage() {
             ) : (
               <button
                 type="button"
-                onClick={() => setMode('signin')}
-                className="hover:text-slate-900 dark:hover:text-white font-medium cursor-pointer"
+                onClick={() => {
+                  setAuthAlert(null);
+                  setMode('signin');
+                }}
+                className="py-1.5 hover:text-slate-900 dark:hover:text-white font-medium cursor-pointer"
               >
                 Already have an account? Sign in
               </button>

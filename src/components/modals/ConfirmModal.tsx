@@ -35,14 +35,15 @@ export function ConfirmModal({
         </div>
         <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed pt-1">{message}</p>
       </div>
-      <div className="mt-6 flex items-center justify-end gap-2.5">
-        <Button variant="outline" onClick={onClose} disabled={loading}>
+      <div className="mt-6 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2">
+        <Button variant="outline" onClick={onClose} disabled={loading} className="w-full sm:w-auto">
           Cancel
         </Button>
         <Button
           variant={danger ? 'danger' : 'primary'}
           onClick={onConfirm}
           loading={loading}
+          className="w-full sm:w-auto"
         >
           {confirmLabel}
         </Button>

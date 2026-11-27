@@ -287,7 +287,7 @@ export function FriendsPage() {
                 {incomingRequests.map((req) => {
                   const sender = profilesMap[req.requesterUid];
                   return (
-                    <div key={req.id} className="px-5 py-3.5 flex items-center justify-between gap-3">
+                    <div key={req.id} className="px-4 sm:px-5 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <div className="flex items-center gap-3 min-w-0">
                         <Avatar
                           name={sender?.displayName || 'User'}
@@ -303,7 +303,7 @@ export function FriendsPage() {
                           </p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
+                      <div className="grid grid-cols-2 sm:flex items-center gap-2 shrink-0">
                         <Button
                           size="sm"
                           onClick={async () => {
@@ -311,6 +311,7 @@ export function FriendsPage() {
                             await respondFriendRequest(profile, req, 'accepted');
                             showToast('Friend request accepted', { variant: 'success' });
                           }}
+                          className="w-full sm:w-auto"
                         >
                           <Check className="w-3.5 h-3.5" />
                           Accept
@@ -323,6 +324,7 @@ export function FriendsPage() {
                             await respondFriendRequest(profile, req, 'rejected');
                             showToast('Request declined', { variant: 'info' });
                           }}
+                          className="w-full sm:w-auto"
                         >
                           <X className="w-3.5 h-3.5" />
                           Decline
@@ -397,7 +399,7 @@ export function FriendsPage() {
                   return (
                     <div
                       key={fr.id}
-                      className="px-5 py-3.5 flex items-center justify-between gap-3"
+                      className="px-4 sm:px-5 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                     >
                       <button
                         type="button"
@@ -415,7 +417,7 @@ export function FriendsPage() {
                           </p>
                         </div>
                       </button>
-                      <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex items-center justify-end gap-2 shrink-0">
                         {friend && (
                           <Button
                             size="sm"
@@ -428,6 +430,7 @@ export function FriendsPage() {
                         <Button
                           size="sm"
                           variant="ghost"
+                          aria-label={`Remove ${name}`}
                           className="text-red-600 dark:text-red-400"
                           onClick={() => setRemoveTarget({ friendshipId: fr.id, name })}
                         >
