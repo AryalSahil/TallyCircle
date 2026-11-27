@@ -10,7 +10,7 @@
         "email": { "type": "string", "minLength": 3, "maxLength": 120 },
         "phone": { "type": "string", "maxLength": 30 },
         "upiId": { "type": "string", "maxLength": 100 },
-        "photoUrl": { "type": "string", "maxLength": 500 },
+        "photoUrl": { "type": "string", "maxLength": 250000 },
         "handle": { "type": "string", "minLength": 2, "maxLength": 40, "pattern": "^[a-z0-9_]+$" },
         "theme": { "type": "string", "enum": ["light", "dark", "system"] },
         "preferredCurrency": { "type": "string", "enum": ["INR", "USD", "EUR", "GBP", "AED", "SGD", "THB"] },
@@ -28,7 +28,7 @@
         "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
         "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
         "handle": { "type": "string", "minLength": 2, "maxLength": 40, "pattern": "^[a-z0-9_]+$" },
-        "photoUrl": { "type": "string", "maxLength": 500 },
+        "photoUrl": { "type": "string", "maxLength": 250000 },
         "upiId": { "type": "string", "maxLength": 100 },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
@@ -43,7 +43,7 @@
         "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
         "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
         "handle": { "type": "string", "minLength": 2, "maxLength": 40 },
-        "photoUrl": { "type": "string", "maxLength": 500 },
+        "photoUrl": { "type": "string", "maxLength": 250000 },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
@@ -58,6 +58,8 @@
         "requesterUid": { "type": "string", "minLength": 1, "maxLength": 128 },
         "recipientUid": { "type": "string", "minLength": 1, "maxLength": 128 },
         "status": { "type": "string", "enum": ["pending", "accepted", "rejected"] },
+        "nicknames": { "type": "object" },
+        "notes": { "type": "object" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },

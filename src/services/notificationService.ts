@@ -12,13 +12,14 @@ import {
   deleteDoc,
   Unsubscribe,
 } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, handleFirestoreError, logFirestoreError, OperationType } from '../lib/firebase';
 import type { AppNotification } from '../types';
 import { formatINR } from '../utils/finance';
 
 export function subscribeNotifications(
   uid: string,
-  callback: (items: AppNotification[]) => void
+  callback: (items: AppNotification[]) => void,
+  onError?: (err: Error) => void
 ): Unsubscribe {
   const q = query(
     collection(db, 'notifications'),
@@ -36,7 +37,8 @@ export function subscribeNotifications(
       callback(items);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'notifications');
+      const info = logFirestoreError(error, OperationType.LIST, 'notifications');
+      if (onError) onError(new Error(info.error));
     }
   );
 }

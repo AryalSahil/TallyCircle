@@ -48,7 +48,7 @@ service cloud.firestore {
         && data.email is string && data.email.size() >= 3 && data.email.size() <= 120
         && (!('phone' in data) || (data.phone is string && data.phone.size() <= 30))
         && (!('upiId' in data) || (data.upiId is string && data.upiId.size() <= 100))
-        && (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 500))
+        && (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 250000))
         && data.handle is string && data.handle.size() >= 2 && data.handle.size() <= 40 && data.handle.matches('^[a-z0-9_]+$')
         && (!('theme' in data) || data.theme in ['light', 'dark', 'system'])
         && (!('preferredCurrency' in data) || data.preferredCurrency in ['INR', 'USD', 'EUR', 'GBP', 'AED', 'SGD', 'THB'])
@@ -63,7 +63,7 @@ service cloud.firestore {
         && data.uid == uid
         && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
         && data.handle is string && data.handle.size() >= 2 && data.handle.size() <= 40 && data.handle.matches('^[a-z0-9_]+$')
-        && (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 500))
+        && (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 250000))
         && (!('upiId' in data) || (data.upiId is string && data.upiId.size() <= 100))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
@@ -75,14 +75,14 @@ service cloud.firestore {
         && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128
         && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
         && data.handle is string && data.handle.size() >= 2 && data.handle.size() <= 40
-        && (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 500))
+        && (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 250000))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
 
     function isValidFriendship(data) {
       return data.keys().hasAll(['users', 'requesterUid', 'recipientUid', 'status', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['users', 'requesterUid', 'recipientUid', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['users', 'requesterUid', 'recipientUid', 'status', 'nicknames', 'notes', 'createdAt', 'updatedAt'])
         && data.users is list && data.users.size() == 2
         && data.users[0] is string && data.users[0].size() >= 1 && data.users[0].size() <= 128
         && data.users[1] is string && data.users[1].size() >= 1 && data.users[1].size() <= 128
@@ -90,6 +90,8 @@ service cloud.firestore {
         && data.recipientUid is string && data.recipientUid in data.users
         && data.requesterUid != data.recipientUid
         && data.status in ['pending', 'accepted', 'rejected']
+        && (!('nicknames' in data) || (data.nicknames is map && data.nicknames.size() <= 2 && data.nicknames.keys().hasOnly(data.users)))
+        && (!('notes' in data) || (data.notes is map && data.notes.size() <= 2 && data.notes.keys().hasOnly(data.users)))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -307,6 +309,20 @@ service cloud.firestore {
           (existing().status == 'rejected' && request.auth.uid == incoming().requesterUid
             && incoming().status == 'pending'
             && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'requesterUid', 'recipientUid', 'updatedAt']))
+          ||
+          (existing().status == 'accepted'
+            && incoming().status == 'accepted'
+            && incoming().requesterUid == existing().requesterUid
+            && incoming().recipientUid == existing().recipientUid
+            && (!('nicknames' in incoming()) || !(request.auth.uid in incoming().nicknames) || (incoming().nicknames[request.auth.uid] is string && incoming().nicknames[request.auth.uid].size() <= 60))
+            && (!('notes' in incoming()) || !(request.auth.uid in incoming().notes) || (incoming().notes[request.auth.uid] is string && incoming().notes[request.auth.uid].size() <= 250))
+            && (!('nicknames' in existing())
+              || (existing().users[0] == request.auth.uid && (!(existing().users[1] in existing().nicknames) || (('nicknames' in incoming()) && (existing().users[1] in incoming().nicknames) && incoming().nicknames[existing().users[1]] == existing().nicknames[existing().users[1]])))
+              || (existing().users[1] == request.auth.uid && (!(existing().users[0] in existing().nicknames) || (('nicknames' in incoming()) && (existing().users[0] in incoming().nicknames) && incoming().nicknames[existing().users[0]] == existing().nicknames[existing().users[0]]))))
+            && (!('notes' in existing())
+              || (existing().users[0] == request.auth.uid && (!(existing().users[1] in existing().notes) || (('notes' in incoming()) && (existing().users[1] in incoming().notes) && incoming().notes[existing().users[1]] == existing().notes[existing().users[1]])))
+              || (existing().users[1] == request.auth.uid && (!(existing().users[0] in existing().notes) || (('notes' in incoming()) && (existing().users[0] in incoming().notes) && incoming().notes[existing().users[0]] == existing().notes[existing().users[0]]))))
+            && incoming().diff(existing()).affectedKeys().hasOnly(['nicknames', 'notes', 'updatedAt']))
         );
       allow delete: if isValidId(friendshipId) && isVerifiedUser() && request.auth.uid in existing().users;
     }
@@ -371,7 +387,7 @@ service cloud.firestore {
             && getAfter(/databases/$(database)/documents/groupInvites/$(incoming().lastJoinToken)).data.usesCount == get(/databases/$(database)/documents/groupInvites/$(incoming().lastJoinToken)).data.usesCount + 1
             && incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'memberNames', 'lastJoinToken', 'updatedAt']))
         );
-      allow delete: if false;
+      allow delete: if isValidId(groupId) && isVerifiedUser() && request.auth.uid in existing().memberUids;
 
       match /expenses/{expenseId} {
         allow get: if isValidId(groupId) && isValidId(expenseId) && isGroupMember(groupId);
@@ -410,7 +426,9 @@ service cloud.firestore {
           allow update: if false;
           allow delete: if isValidId(groupId) && isValidId(expenseId) && isValidId(noteId)
             && isGroupMember(groupId)
-            && existing().authorUid == request.auth.uid;
+            && (existing().authorUid == request.auth.uid
+              || !existsAfter(/databases/$(database)/documents/groups/$(groupId)/expenses/$(expenseId))
+              || !existsAfter(/databases/$(database)/documents/groups/$(groupId)));
         }
       }
 
@@ -432,7 +450,6 @@ service cloud.firestore {
           && incoming().fromName == existing().fromName
           && incoming().toUid == existing().toUid
           && incoming().toName == existing().toName
-          && incoming().amountPaise == existing().amountPaise
           && incoming().createdBy == existing().createdBy
           && incoming().createdAt == existing().createdAt
           && incoming().updatedAt == request.time
@@ -441,23 +458,34 @@ service cloud.firestore {
             (request.auth.uid == existing().fromUid
               && existing().status in ['pending', 'disputed']
               && incoming().status == 'awaiting_confirmation'
+              && incoming().amountPaise == existing().amountPaise
               && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'method', 'upiTransactionRef', 'note', 'updatedAt']))
             ||
             (request.auth.uid == existing().toUid
               && existing().status in ['pending', 'awaiting_confirmation', 'disputed']
               && incoming().status == 'confirmed'
+              && incoming().amountPaise == existing().amountPaise
               && incoming().confirmedBy == request.auth.uid
               && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'confirmedBy', 'updatedAt']))
             ||
             (request.auth.uid == existing().toUid
               && existing().status in ['pending', 'awaiting_confirmation']
               && incoming().status == 'disputed'
+              && incoming().amountPaise == existing().amountPaise
               && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'disputeReason', 'updatedAt']))
+            ||
+            ((request.auth.uid == existing().createdBy || request.auth.uid == existing().fromUid || request.auth.uid == existing().toUid)
+              && existing().status in ['pending', 'awaiting_confirmation', 'disputed']
+              && incoming().status == existing().status
+              && incoming().diff(existing()).affectedKeys().hasOnly(['amountPaise', 'method', 'upiTransactionRef', 'note', 'updatedAt']))
           );
         allow delete: if isValidId(groupId) && isValidId(settlementId)
           && isGroupMember(groupId)
-          && existing().status != 'confirmed'
-          && (request.auth.uid == existing().createdBy || request.auth.uid == existing().fromUid || request.auth.uid == existing().toUid);
+          && (
+            (existing().status != 'confirmed'
+              && (request.auth.uid == existing().createdBy || request.auth.uid == existing().fromUid || request.auth.uid == existing().toUid))
+            || !existsAfter(/databases/$(database)/documents/groups/$(groupId))
+          );
       }
 
       match /activities/{activityId} {
@@ -472,7 +500,8 @@ service cloud.firestore {
             || request.auth.uid in getAfter(/databases/$(database)/documents/groups/$(groupId)).data.memberUids
           );
         allow update: if false;
-        allow delete: if false;
+        allow delete: if isValidId(groupId) && isValidId(activityId) && isGroupMember(groupId)
+          && !existsAfter(/databases/$(database)/documents/groups/$(groupId));
       }
     }
 
@@ -505,7 +534,8 @@ service cloud.firestore {
         && request.auth.uid in incoming().usedBy
         && incoming().usedBy.size() == existing().usedBy.size() + 1
         && incoming().diff(existing()).affectedKeys().hasOnly(['usesCount', 'usedBy', 'updatedAt']);
-      allow delete: if isValidId(token) && isVerifiedUser() && isGroupMember(existing().groupId);
+      allow delete: if isValidId(token) && isVerifiedUser()
+        && (isGroupMember(existing().groupId) || existing().createdBy == request.auth.uid);
     }
 
     match /notifications/{notificationId} {

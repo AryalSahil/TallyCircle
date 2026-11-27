@@ -15,6 +15,9 @@ import {
   Menu,
   X,
   UserCircle,
+  WifiOff,
+  AlertTriangle,
+  RotateCcw,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -36,7 +39,13 @@ export function AppShell({ onQuickAddExpense }: { onQuickAddExpense: () => void 
   const { profile, logout } = useAuth();
   const { resolvedTheme, toggleTheme } = useTheme();
   const { baseCurrency, setBaseCurrency } = useCurrency();
-  const { unreadNotificationsCount, activeGroups } = useAppData();
+  const {
+    unreadNotificationsCount,
+    activeGroups,
+    syncStatus,
+    lastSyncError,
+    retrySync,
+  } = useAppData();
   const location = useLocation();
   const [searchOpen, setSearchOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -303,6 +312,42 @@ export function AppShell({ onQuickAddExpense }: { onQuickAddExpense: () => void 
             <h1 className="font-display text-base sm:text-lg font-semibold text-slate-900 dark:text-slate-100 truncate">
               {pageTitle}
             </h1>
+            {/* Live real-time database connection status indicator */}
+            <span
+              role="status"
+              aria-live="polite"
+              title={
+                syncStatus === 'online'
+                  ? 'Real-time database connected'
+                  : syncStatus === 'syncing'
+                    ? 'Syncing updates...'
+                    : syncStatus === 'offline'
+                      ? 'Offline mode — changes queue locally'
+                      : lastSyncError || 'Sync interrupted'
+              }
+              className="hidden sm:inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400 shrink-0"
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  syncStatus === 'online'
+                    ? 'bg-emerald-500'
+                    : syncStatus === 'syncing'
+                      ? 'bg-amber-500 animate-pulse'
+                      : syncStatus === 'offline'
+                        ? 'bg-slate-400'
+                        : 'bg-red-500'
+                }`}
+              />
+              <span>
+                {syncStatus === 'online'
+                  ? 'Live'
+                  : syncStatus === 'syncing'
+                    ? 'Syncing'
+                    : syncStatus === 'offline'
+                      ? 'Offline'
+                      : 'Sync issue'}
+              </span>
+            </span>
           </div>
 
           {/* Global Search Trigger */}
@@ -359,6 +404,41 @@ export function AppShell({ onQuickAddExpense }: { onQuickAddExpense: () => void 
         </header>
 
         <GlobalSearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
+
+        {(syncStatus === 'offline' || syncStatus === 'error') && (
+          <div className="max-w-[1200px] w-full mx-auto px-3.5 sm:px-6 pt-3">
+            <div
+              role="alert"
+              className={`rounded-lg border px-3.5 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs ${
+                syncStatus === 'error'
+                  ? 'border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300'
+                  : 'border-amber-200 dark:border-amber-900/60 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300'
+              }`}
+            >
+              <span className="flex items-center gap-2 min-w-0">
+                {syncStatus === 'error' ? (
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                ) : (
+                  <WifiOff className="w-4 h-4 shrink-0" />
+                )}
+                <span className="truncate">
+                  {syncStatus === 'offline'
+                    ? 'You are offline. Cached data is shown and edits will sync when reconnected.'
+                    : lastSyncError || 'Real-time sync encountered an error.'}
+                </span>
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={retrySync}
+                className="w-full sm:w-auto shrink-0"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                Retry Sync
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* Viewport */}
         <main className="flex-1 max-w-[1200px] w-full mx-auto px-3.5 sm:px-6 py-4 sm:py-6">

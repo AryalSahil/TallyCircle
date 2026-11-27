@@ -1,15 +1,18 @@
 import React, { useEffect, useState } from 'react';
-import { Save, LogOut, Plus, X, Tag, Coins } from 'lucide-react';
+import { Save, LogOut, Plus, X, Tag, Coins, Upload, Trash2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useAppData } from '../contexts/AppDataContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { useCurrency } from '../contexts/CurrencyContext';
 import { useToast } from '../contexts/ToastContext';
 import { CURRENCY_CODES, CurrencyCode, SUPPORTED_CURRENCIES, ThemePreference } from '../types';
 import { normalizeExpenseTag } from '../utils/finance';
+import { compressImageFile } from '../utils/helpers';
 import { Avatar, Button, Card, InputField } from '../components/ui/Primitives';
 
 export function ProfilePage() {
   const { profile, updateMyProfile, logout } = useAuth();
+  const { refreshProfiles } = useAppData();
   const { theme, setTheme } = useTheme();
   const { baseCurrency, setBaseCurrency } = useCurrency();
   const { showToast } = useToast();
@@ -33,12 +36,28 @@ export function ProfilePage() {
     setPhotoUrl(profile.photoUrl || '');
   }, [profile]);
 
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const compressed = await compressImageFile(file, 400, 120000);
+      setPhotoUrl(compressed);
+      showToast('Profile picture ready — click Save Profile to apply', { variant: 'info' });
+    } catch (err: unknown) {
+      showToast('Avatar upload failed', {
+        description: err instanceof Error ? err.message : 'Choose a smaller image.',
+        variant: 'error',
+      });
+    }
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!profile) return;
     setSaving(true);
     try {
       await updateMyProfile({ fullName, handle, phone, upiId, photoUrl });
+      await refreshProfiles([profile.uid], true);
       showToast('Profile saved', { variant: 'success' });
     } catch (err: unknown) {
       showToast('Could not update profile', {
@@ -98,16 +117,43 @@ export function ProfilePage() {
   return (
     <div className="max-w-2xl space-y-6">
       <Card className="p-4 sm:p-6 space-y-5 sm:space-y-6">
-        <div className="flex items-center gap-3.5 sm:gap-4">
-          <Avatar name={profile.fullName} photoUrl={photoUrl || profile.photoUrl} size="lg" />
-          <div className="min-w-0">
-            <h2 className="font-display text-lg font-bold text-slate-900 dark:text-white truncate">
-              {profile.fullName}
-            </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-              {profile.email} · Joined{' '}
-              {profile.createdAt?.toDate?.().toLocaleDateString('en-IN') || 'Recently'}
-            </p>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5 sm:gap-4 min-w-0">
+            <Avatar name={profile.fullName} photoUrl={photoUrl || profile.photoUrl} size="lg" />
+            <div className="min-w-0">
+              <h2 className="font-display text-lg font-bold text-slate-900 dark:text-white truncate">
+                {profile.fullName}
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                {profile.email} · Joined{' '}
+                {profile.createdAt?.toDate?.().toLocaleDateString('en-IN') || 'Recently'}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <label className="inline-flex items-center gap-1.5 min-h-[38px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer">
+              <Upload className="w-3.5 h-3.5" />
+              Upload Photo
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                onChange={handleAvatarUpload}
+                className="hidden"
+              />
+            </label>
+            {photoUrl && (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="text-red-600 dark:text-red-400"
+                onClick={() => setPhotoUrl('')}
+                aria-label="Remove profile picture"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Remove
+              </Button>
+            )}
           </div>
         </div>
 
@@ -149,17 +195,19 @@ export function ProfilePage() {
             />
           </div>
 
-          <InputField
-            label="Profile picture URL (optional)"
-            type="url"
-            placeholder="https://..."
-            value={photoUrl}
-            onChange={(e) => setPhotoUrl(e.target.value)}
-            maxLength={500}
-          />
+          {!photoUrl.startsWith('data:image/') && (
+            <InputField
+              label="Or paste profile picture URL (optional)"
+              type="url"
+              placeholder="https://..."
+              value={photoUrl}
+              onChange={(e) => setPhotoUrl(e.target.value)}
+              maxLength={500}
+            />
+          )}
 
           <div className="pt-2 flex justify-end">
-            <Button type="submit" loading={saving}>
+            <Button type="submit" loading={saving} className="w-full sm:w-auto">
               <Save className="w-4 h-4" />
               Save Profile
             </Button>

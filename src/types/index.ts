@@ -1,4 +1,4 @@
-import { Timestamp } from 'firebase/firestore';
+import type { Timestamp } from 'firebase/firestore';
 
 export const EXPENSE_CATEGORIES = [
   'Food',
@@ -76,6 +76,8 @@ export interface Friendship {
   requesterUid: string;
   recipientUid: string;
   status: 'pending' | 'accepted' | 'rejected';
+  nicknames?: Record<string, string>;
+  notes?: Record<string, string>;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

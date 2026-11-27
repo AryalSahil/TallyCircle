@@ -9,11 +9,12 @@ import {
   Share2,
   Users,
   Link2,
+  Pencil,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useAppData } from '../contexts/AppDataContext';
 import { useToast } from '../contexts/ToastContext';
-import type { FriendInvite, PublicProfile } from '../types';
+import type { FriendInvite, Friendship, PublicProfile } from '../types';
 import { findUserByEmailOrHandle } from '../services/userService';
 import {
   createFriendInvite,
@@ -22,9 +23,10 @@ import {
   revokeFriendInvite,
   sendFriendRequest,
   subscribeMyFriendInvites,
+  updateFriendDetails,
 } from '../services/friendService';
 import { buildWhatsAppShareUrl } from '../utils/helpers';
-import { Avatar, Button, Card, EmptyState, Modal } from '../components/ui/Primitives';
+import { Avatar, Button, Card, EmptyState, InputField, Modal } from '../components/ui/Primitives';
 import { ConfirmModal } from '../components/modals/ConfirmModal';
 
 export function FriendsPage() {
@@ -44,8 +46,22 @@ export function FriendsPage() {
 
   const [myInvites, setMyInvites] = useState<FriendInvite[]>([]);
   const [creatingInvite, setCreatingInvite] = useState(false);
-  const [viewingProfile, setViewingProfile] = useState<PublicProfile | null>(null);
+  const [viewingProfile, setViewingProfile] = useState<{
+    publicProfile: PublicProfile;
+    friendship: Friendship;
+  } | null>(null);
+  const [editingFriend, setEditingFriend] = useState<{
+    friendship: Friendship;
+    displayName: string;
+  } | null>(null);
+  const [editNickname, setEditNickname] = useState('');
+  const [editNote, setEditNote] = useState('');
+  const [savingFriend, setSavingFriend] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<{ friendshipId: string; name: string } | null>(
+    null
+  );
+  const [revokeInviteToken, setRevokeInviteToken] = useState<string | null>(null);
+  const [cancelReqTarget, setCancelReqTarget] = useState<{ friendshipId: string; name: string } | null>(
     null
   );
 
@@ -240,7 +256,7 @@ export function FriendsPage() {
                         </span>
                         <button
                           type="button"
-                          onClick={() => revokeFriendInvite(inv.token)}
+                          onClick={() => setRevokeInviteToken(inv.token)}
                           className="text-red-600 dark:text-red-400 hover:underline cursor-pointer"
                         >
                           Revoke
@@ -365,7 +381,12 @@ export function FriendsPage() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => removeFriend(req.id)}
+                        onClick={() =>
+                          setCancelReqTarget({
+                            friendshipId: req.id,
+                            name: recipient?.displayName || 'this request',
+                          })
+                        }
                       >
                         Cancel
                       </Button>
@@ -395,7 +416,10 @@ export function FriendsPage() {
                 {acceptedFriends.map((fr) => {
                   const otherUid = fr.users.find((u) => u !== profile?.uid) || '';
                   const friend = profilesMap[otherUid];
-                  const name = friend?.displayName || otherUid;
+                  const baseName = friend?.displayName || otherUid;
+                  const nickname = profile?.uid ? fr.nicknames?.[profile.uid]?.trim() : '';
+                  const personalNote = profile?.uid ? fr.notes?.[profile.uid]?.trim() : '';
+                  const displayName = nickname || baseName;
                   return (
                     <div
                       key={fr.id}
@@ -403,26 +427,44 @@ export function FriendsPage() {
                     >
                       <button
                         type="button"
-                        onClick={() => friend && setViewingProfile(friend)}
+                        onClick={() => friend && setViewingProfile({ publicProfile: friend, friendship: fr })}
                         className="flex items-center gap-3 min-w-0 text-left cursor-pointer"
                       >
-                        <Avatar name={name} photoUrl={friend?.photoUrl} size="md" />
+                        <Avatar name={displayName} photoUrl={friend?.photoUrl} size="md" />
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
-                            {name}
+                            {displayName}
+                            {nickname && (
+                              <span className="ml-1.5 text-xs font-normal text-slate-400">
+                                ({baseName})
+                              </span>
+                            )}
                           </p>
                           <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
                             @{friend?.handle || 'member'}
                             {friend?.upiId ? ` · UPI: ${friend.upiId}` : ''}
+                            {personalNote ? ` · ${personalNote}` : ''}
                           </p>
                         </div>
                       </button>
-                      <div className="flex items-center justify-end gap-2 shrink-0">
+                      <div className="flex items-center justify-end gap-1.5 shrink-0">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          aria-label={`Edit details for ${displayName}`}
+                          onClick={() => {
+                            setEditingFriend({ friendship: fr, displayName: baseName });
+                            setEditNickname(nickname || '');
+                            setEditNote(personalNote || '');
+                          }}
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
                         {friend && (
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => setViewingProfile(friend)}
+                            onClick={() => setViewingProfile({ publicProfile: friend, friendship: fr })}
                           >
                             Profile
                           </Button>
@@ -430,9 +472,9 @@ export function FriendsPage() {
                         <Button
                           size="sm"
                           variant="ghost"
-                          aria-label={`Remove ${name}`}
+                          aria-label={`Remove ${displayName}`}
                           className="text-red-600 dark:text-red-400"
-                          onClick={() => setRemoveTarget({ friendshipId: fr.id, name })}
+                          onClick={() => setRemoveTarget({ friendshipId: fr.id, name: displayName })}
                         >
                           <UserMinus className="w-3.5 h-3.5" />
                         </Button>
@@ -446,6 +488,69 @@ export function FriendsPage() {
         </div>
       </div>
 
+      {/* Edit Friend Details Modal */}
+      <Modal
+        open={Boolean(editingFriend)}
+        onClose={() => setEditingFriend(null)}
+        title={`Edit ${editingFriend?.displayName || 'Friend'}`}
+        subtitle="Add a private nickname or note visible only to you."
+        maxWidth="max-w-md"
+      >
+        {editingFriend && (
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!profile) return;
+              setSavingFriend(true);
+              try {
+                await updateFriendDetails(profile, editingFriend.friendship, {
+                  nickname: editNickname,
+                  note: editNote,
+                });
+                showToast('Friend details updated', { variant: 'success' });
+                setEditingFriend(null);
+              } catch (err: unknown) {
+                showToast('Could not save details', {
+                  description: err instanceof Error ? err.message : 'Try again.',
+                  variant: 'error',
+                });
+              } finally {
+                setSavingFriend(false);
+              }
+            }}
+            className="space-y-4"
+          >
+            <InputField
+              label="Personal nickname (optional)"
+              placeholder="e.g., College Roomie"
+              value={editNickname}
+              onChange={(e) => setEditNickname(e.target.value)}
+              maxLength={60}
+            />
+            <InputField
+              label="Private note (optional)"
+              placeholder="e.g., Prefers GPay / settles monthly"
+              value={editNote}
+              onChange={(e) => setEditNote(e.target.value)}
+              maxLength={250}
+            />
+            <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setEditingFriend(null)}
+                className="w-full sm:w-auto"
+              >
+                Cancel
+              </Button>
+              <Button type="submit" loading={savingFriend} className="w-full sm:w-auto">
+                Save Details
+              </Button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
       {/* Friend Profile Modal (Public info only — no private PII) */}
       <Modal
         open={Boolean(viewingProfile)}
@@ -457,28 +562,44 @@ export function FriendsPage() {
           <div className="space-y-4 text-center">
             <div className="flex justify-center">
               <Avatar
-                name={viewingProfile.displayName}
-                photoUrl={viewingProfile.photoUrl}
+                name={viewingProfile.publicProfile.displayName}
+                photoUrl={viewingProfile.publicProfile.photoUrl}
                 size="lg"
               />
             </div>
             <div>
               <h3 className="text-base font-semibold text-slate-900 dark:text-white">
-                {viewingProfile.displayName}
+                {viewingProfile.publicProfile.displayName}
               </h3>
-              <p className="text-xs text-slate-500">@{viewingProfile.handle}</p>
+              <p className="text-xs text-slate-500">@{viewingProfile.publicProfile.handle}</p>
             </div>
             <div className="rounded-lg border border-slate-200 dark:border-slate-800 p-3 text-left text-xs space-y-1.5">
+              {profile?.uid && viewingProfile.friendship.nicknames?.[profile.uid] && (
+                <div className="flex justify-between gap-2">
+                  <span className="text-slate-500">Your nickname</span>
+                  <span className="text-slate-900 dark:text-white font-medium">
+                    {viewingProfile.friendship.nicknames[profile.uid]}
+                  </span>
+                </div>
+              )}
+              {profile?.uid && viewingProfile.friendship.notes?.[profile.uid] && (
+                <div className="flex justify-between gap-2">
+                  <span className="text-slate-500">Your note</span>
+                  <span className="text-slate-900 dark:text-white text-right">
+                    {viewingProfile.friendship.notes[profile.uid]}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-slate-500">UPI ID</span>
                 <span className="font-mono-nums text-slate-900 dark:text-white">
-                  {viewingProfile.upiId || 'Not set'}
+                  {viewingProfile.publicProfile.upiId || 'Not set'}
                 </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Member since</span>
                 <span className="text-slate-900 dark:text-white">
-                  {viewingProfile.createdAt?.toDate?.().toLocaleDateString('en-IN') || '—'}
+                  {viewingProfile.publicProfile.createdAt?.toDate?.().toLocaleDateString('en-IN') || '—'}
                 </span>
               </div>
             </div>
@@ -498,6 +619,34 @@ export function FriendsPage() {
         title={`Remove ${removeTarget?.name}?`}
         message="Removing a friend does not delete shared historical expenses in groups."
         confirmLabel="Remove Friend"
+      />
+
+      <ConfirmModal
+        open={Boolean(cancelReqTarget)}
+        onClose={() => setCancelReqTarget(null)}
+        onConfirm={async () => {
+          if (!cancelReqTarget) return;
+          await removeFriend(cancelReqTarget.friendshipId);
+          showToast('Friend request cancelled', { variant: 'info' });
+          setCancelReqTarget(null);
+        }}
+        title="Cancel friend request?"
+        message={`Withdraw your pending friend request to ${cancelReqTarget?.name}?`}
+        confirmLabel="Cancel Request"
+      />
+
+      <ConfirmModal
+        open={Boolean(revokeInviteToken)}
+        onClose={() => setRevokeInviteToken(null)}
+        onConfirm={async () => {
+          if (!revokeInviteToken) return;
+          await revokeFriendInvite(revokeInviteToken);
+          showToast('Invite link revoked', { variant: 'info' });
+          setRevokeInviteToken(null);
+        }}
+        title="Revoke friend invite link?"
+        message="Anyone with this link will no longer be able to send you a friend request using it."
+        confirmLabel="Revoke Link"
       />
     </div>
   );

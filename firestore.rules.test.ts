@@ -94,4 +94,20 @@ export const DIRTY_DOZEN_CASES = [
     auth: { uid: 'userA', token: { email_verified: true } },
     expected: 'PERMISSION_DENIED',
   },
+  {
+    name: '13. Accepted friend attempts to overwrite peer note key',
+    path: '/friendships/userA_userB',
+    operation: 'update',
+    auth: { uid: 'userA', token: { email_verified: true } },
+    payload: { notes: { userB: 'tampered' } },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '14. Pending settlement edit attempts unauthorized status escalation',
+    path: '/groups/g1/settlements/s_pending',
+    operation: 'update',
+    auth: { uid: 'debtorUid', token: { email_verified: true } },
+    payload: { amountPaise: 5000, status: 'confirmed' },
+    expected: 'PERMISSION_DENIED',
+  },
 ];

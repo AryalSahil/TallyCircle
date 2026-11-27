@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { Unsubscribe } from 'firebase/firestore';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { onSnapshotsInSync, Unsubscribe } from 'firebase/firestore';
+import { db } from '../lib/firebase';
 import { useAuth } from './AuthContext';
 import type {
   AppNotification,
@@ -18,6 +19,8 @@ import { subscribeNotifications } from '../services/notificationService';
 import { getPublicProfiles } from '../services/userService';
 import { computeGroupBalances } from '../utils/finance';
 
+export type SyncStatus = 'online' | 'syncing' | 'offline' | 'error';
+
 interface AppDataContextValue {
   groups: Group[];
   activeGroups: Group[];
@@ -31,6 +34,9 @@ interface AppDataContextValue {
   notifications: AppNotification[];
   unreadNotificationsCount: number;
   loadingData: boolean;
+  syncStatus: SyncStatus;
+  lastSyncError: string | null;
+  retrySync: () => void;
   summary: {
     totalAccessibleExpensesPaise: number;
     totalPaidByMePaise: number;
@@ -41,7 +47,7 @@ interface AppDataContextValue {
     recentSettlements: Array<Settlement & { groupName: string }>;
     recentActivities: Array<GroupActivity & { groupName: string }>;
   };
-  refreshProfiles: (uids: string[]) => Promise<void>;
+  refreshProfiles: (uids: string[], forceRefresh?: boolean) => Promise<void>;
 }
 
 const AppDataContext = createContext<AppDataContextValue | null>(null);
@@ -57,6 +63,47 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loadingData, setLoadingData] = useState(true);
 
+  const [isOnline, setIsOnline] = useState(() =>
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+  const [snapshotsSynced, setSnapshotsSynced] = useState(true);
+  const [lastSyncError, setLastSyncError] = useState<string | null>(null);
+  const [syncEpoch, setSyncEpoch] = useState(0);
+
+  const retrySync = useCallback(() => {
+    setLastSyncError(null);
+    setSnapshotsSynced(false);
+    setSyncEpoch((e) => e + 1);
+  }, []);
+
+  // Monitor browser online/offline state and auto-clear error when reconnected
+  useEffect(() => {
+    const onOnline = () => {
+      setIsOnline(true);
+      setLastSyncError(null);
+      setSyncEpoch((e) => e + 1);
+    };
+    const onOffline = () => {
+      setIsOnline(false);
+    };
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, []);
+
+  // Monitor Firestore snapshot sync status
+  useEffect(() => {
+    if (!profile?.uid) return;
+    setSnapshotsSynced(false);
+    const unsub = onSnapshotsInSync(db, () => {
+      setSnapshotsSynced(true);
+    });
+    return () => unsub();
+  }, [profile?.uid, syncEpoch]);
+
   // Subscribe to groups, friendships, and notifications
   useEffect(() => {
     if (!profile?.uid) {
@@ -66,36 +113,56 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       setExpensesByGroup({});
       setSettlementsByGroup({});
       setActivitiesByGroup({});
+      setLastSyncError(null);
       setLoadingData(false);
       return;
     }
 
     setLoadingData(true);
+    setLastSyncError(null);
     let groupsReady = false;
     const markReady = () => {
       if (groupsReady) setLoadingData(false);
     };
+    const onListenerError = (err: Error) => {
+      setLastSyncError(err.message || 'Real-time sync interrupted.');
+      setLoadingData(false);
+    };
 
-    const unsubGroups = subscribeGroups(profile.uid, (list) => {
-      setGroups(list);
-      groupsReady = true;
-      markReady();
-    });
+    const unsubGroups = subscribeGroups(
+      profile.uid,
+      (list) => {
+        setGroups(list);
+        groupsReady = true;
+        markReady();
+      },
+      onListenerError
+    );
 
-    const unsubFriends = subscribeFriendships(profile.uid, (list) => {
-      setFriendships(list);
-    });
+    const unsubFriends = subscribeFriendships(
+      profile.uid,
+      (list) => {
+        setFriendships(list);
+      },
+      onListenerError
+    );
 
-    const unsubNotifs = subscribeNotifications(profile.uid, (list) => {
-      setNotifications(list);
-    });
+    const unsubNotifs = subscribeNotifications(
+      profile.uid,
+      (list) => {
+        setNotifications(list);
+      },
+      onListenerError
+    );
 
     return () => {
       unsubGroups();
       unsubFriends();
       unsubNotifs();
     };
-  }, [profile?.uid]);
+  }, [profile?.uid, syncEpoch]);
+
+  const groupIdsKey = useMemo(() => groups.map((g) => g.id).join(','), [groups]);
 
   // Subscribe to expenses, settlements, and activities for each accessible group
   useEffect(() => {
@@ -132,28 +199,44 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       return next;
     });
 
+    const onGroupError = (err: Error) => {
+      setLastSyncError(err.message || 'Group ledger sync interrupted.');
+    };
+
     for (const g of groups) {
       unsubs.push(
-        subscribeGroupExpenses(g.id, (items) => {
-          setExpensesByGroup((prev) => ({ ...prev, [g.id]: items }));
-        })
+        subscribeGroupExpenses(
+          g.id,
+          (items) => {
+            setExpensesByGroup((prev) => ({ ...prev, [g.id]: items }));
+          },
+          onGroupError
+        )
       );
       unsubs.push(
-        subscribeGroupSettlements(g.id, (items) => {
-          setSettlementsByGroup((prev) => ({ ...prev, [g.id]: items }));
-        })
+        subscribeGroupSettlements(
+          g.id,
+          (items) => {
+            setSettlementsByGroup((prev) => ({ ...prev, [g.id]: items }));
+          },
+          onGroupError
+        )
       );
       unsubs.push(
-        subscribeGroupActivities(g.id, (items) => {
-          setActivitiesByGroup((prev) => ({ ...prev, [g.id]: items }));
-        })
+        subscribeGroupActivities(
+          g.id,
+          (items) => {
+            setActivitiesByGroup((prev) => ({ ...prev, [g.id]: items }));
+          },
+          onGroupError
+        )
       );
     }
 
     return () => {
       unsubs.forEach((u) => u());
     };
-  }, [profile?.uid, groups.map((g) => g.id).join(',')]);
+  }, [profile?.uid, groupIdsKey, syncEpoch]);
 
   // Load public profiles for all friends and group members
   useEffect(() => {
@@ -175,10 +258,31 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     });
   }, [profile?.uid, friendships, groups]);
 
-  const refreshProfiles = React.useCallback(async (uids: string[]) => {
+  const refreshProfiles = useCallback(async (uids: string[], forceRefresh = false) => {
+    if (forceRefresh) {
+      const { getPublicProfile } = await import('../services/userService');
+      const entries = await Promise.all(
+        uids.map(async (uid) => [uid, await getPublicProfile(uid, true)] as const)
+      );
+      const updated: Record<string, PublicProfile> = {};
+      for (const [uid, prof] of entries) {
+        if (prof) updated[uid] = prof;
+      }
+      if (Object.keys(updated).length > 0) {
+        setProfilesMap((prev) => ({ ...prev, ...updated }));
+      }
+      return;
+    }
     const loaded = await getPublicProfiles(uids);
     setProfilesMap((prev) => ({ ...prev, ...loaded }));
   }, []);
+
+  const syncStatus: SyncStatus = useMemo(() => {
+    if (!isOnline) return 'offline';
+    if (lastSyncError) return 'error';
+    if (!snapshotsSynced || loadingData) return 'syncing';
+    return 'online';
+  }, [isOnline, lastSyncError, snapshotsSynced, loadingData]);
 
   const activeGroups = useMemo(() => groups.filter((g) => !g.isArchived), [groups]);
   const archivedGroups = useMemo(() => groups.filter((g) => g.isArchived), [groups]);
@@ -280,6 +384,9 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       notifications,
       unreadNotificationsCount,
       loadingData,
+      syncStatus,
+      lastSyncError,
+      retrySync,
       summary,
       refreshProfiles,
     }),
@@ -296,6 +403,9 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       notifications,
       unreadNotificationsCount,
       loadingData,
+      syncStatus,
+      lastSyncError,
+      retrySync,
       summary,
       refreshProfiles,
     ]

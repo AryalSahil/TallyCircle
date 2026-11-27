@@ -691,7 +691,12 @@ export function ExpenseFormModal({
           <div className="space-y-2.5 pt-1 border-t border-slate-100 dark:border-slate-800">
             <div className="flex items-center justify-between gap-2">
               <label className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                Paid by {multiPayerMode && currency !== 'INR' ? '(in ₹ INR)' : ''}
+                Paid by
+                {multiPayerMode && currency !== 'INR' && totalPaise > 0
+                  ? ` (in ₹ INR · Target: ${formatINR(totalPaise)})`
+                  : multiPayerMode && currency !== 'INR'
+                    ? ' (in ₹ INR)'
+                    : ''}
               </label>
               <button
                 type="button"

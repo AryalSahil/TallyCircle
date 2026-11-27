@@ -2,6 +2,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
@@ -9,7 +10,7 @@ import {
   writeBatch,
   Unsubscribe,
 } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, handleFirestoreError, logFirestoreError, OperationType } from '../lib/firebase';
 import type {
   CurrencyCode,
   Expense,
@@ -27,7 +28,8 @@ import { notifyGroupMembers } from './notificationService';
 
 export function subscribeGroupExpenses(
   groupId: string,
-  callback: (expenses: Expense[]) => void
+  callback: (expenses: Expense[]) => void,
+  onError?: (err: Error) => void
 ): Unsubscribe {
   const q = query(
     collection(db, 'groups', groupId, 'expenses'),
@@ -44,7 +46,8 @@ export function subscribeGroupExpenses(
       );
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, `groups/${groupId}/expenses`);
+      const info = logFirestoreError(error, OperationType.LIST, `groups/${groupId}/expenses`);
+      if (onError) onError(new Error(info.error));
     }
   );
 }
@@ -52,7 +55,8 @@ export function subscribeGroupExpenses(
 export function subscribeExpenseNotes(
   groupId: string,
   expenseId: string,
-  callback: (notes: ExpenseNote[]) => void
+  callback: (notes: ExpenseNote[]) => void,
+  onError?: (err: Error) => void
 ): Unsubscribe {
   const q = query(
     collection(db, 'groups', groupId, 'expenses', expenseId, 'notes'),
@@ -69,7 +73,12 @@ export function subscribeExpenseNotes(
       );
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, `groups/${groupId}/expenses/${expenseId}/notes`);
+      const info = logFirestoreError(
+        error,
+        OperationType.LIST,
+        `groups/${groupId}/expenses/${expenseId}/notes`
+      );
+      if (onError) onError(new Error(info.error));
     }
   );
 }
@@ -245,7 +254,14 @@ export async function deleteExpense(
   group: Group,
   expense: Expense
 ): Promise<void> {
+  const notesSnap = await getDocs(
+    collection(db, 'groups', group.id, 'expenses', expense.id, 'notes')
+  );
+
   const batch = writeBatch(db);
+  for (const n of notesSnap.docs) {
+    batch.delete(n.ref);
+  }
   batch.delete(doc(db, 'groups', group.id, 'expenses', expense.id));
 
   const actRef = doc(collection(db, 'groups', group.id, 'activities'));

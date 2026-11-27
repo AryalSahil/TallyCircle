@@ -9,14 +9,15 @@ import {
   writeBatch,
   Unsubscribe,
 } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, handleFirestoreError, logFirestoreError, OperationType } from '../lib/firebase';
 import type { Group, Settlement, SettlementMethod, UserPrivateProfile } from '../types';
 import { formatINR } from '../utils/finance';
 import { createNotification } from './notificationService';
 
 export function subscribeGroupSettlements(
   groupId: string,
-  callback: (items: Settlement[]) => void
+  callback: (items: Settlement[]) => void,
+  onError?: (err: Error) => void
 ): Unsubscribe {
   const q = query(
     collection(db, 'groups', groupId, 'settlements'),
@@ -33,7 +34,8 @@ export function subscribeGroupSettlements(
       );
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, `groups/${groupId}/settlements`);
+      const info = logFirestoreError(error, OperationType.LIST, `groups/${groupId}/settlements`);
+      if (onError) onError(new Error(info.error));
     }
   );
 }
@@ -260,6 +262,64 @@ export async function disputeSettlement(
     type: 'settlement_disputed',
     title: `${group.name} · Payment disputed`,
     body: `${me.fullName} flagged the ${formatINR(settlement.amountPaise)} settlement: ${reason.trim() || 'Not received'}`,
+    groupId: group.id,
+    link: `/groups/${group.id}`,
+  });
+}
+
+export async function updatePendingSettlement(
+  me: UserPrivateProfile,
+  group: Group,
+  settlement: Settlement,
+  updates: {
+    amountPaise: number;
+    method: SettlementMethod;
+    upiTransactionRef?: string;
+    note?: string;
+  }
+): Promise<void> {
+  if (settlement.status === 'confirmed') {
+    throw new Error('Confirmed settlements are locked and cannot be edited.');
+  }
+  if (updates.amountPaise <= 0) {
+    throw new Error('Settlement amount must be greater than ₹0.');
+  }
+
+  const stRef = doc(db, 'groups', group.id, 'settlements', settlement.id);
+  const actRef = doc(collection(db, 'groups', group.id, 'activities'));
+
+  const batch = writeBatch(db);
+  batch.update(stRef, {
+    amountPaise: Math.round(updates.amountPaise),
+    method: updates.method,
+    upiTransactionRef: (updates.upiTransactionRef || '').trim().slice(0, 120),
+    note: (updates.note || '').trim().slice(0, 250),
+    updatedAt: serverTimestamp(),
+  });
+  batch.set(actRef, {
+    groupId: group.id,
+    actorUid: me.uid,
+    actorName: me.fullName,
+    type: 'settlement_updated',
+    summary: `${me.fullName} updated settlement (${settlement.fromName} → ${settlement.toName}) to ${formatINR(updates.amountPaise)}`,
+    relatedId: settlement.id,
+    createdAt: serverTimestamp(),
+  });
+
+  try {
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `groups/${group.id}/settlements/${settlement.id}`);
+  }
+
+  const recipientUid = me.uid === settlement.fromUid ? settlement.toUid : settlement.fromUid;
+  await createNotification({
+    recipientUid,
+    senderUid: me.uid,
+    senderName: me.fullName,
+    type: 'settlement_updated',
+    title: `${group.name} · Settlement updated`,
+    body: `${me.fullName} updated pending settlement to ${formatINR(updates.amountPaise)} (${updates.method.toUpperCase()}).`,
     groupId: group.id,
     link: `/groups/${group.id}`,
   });

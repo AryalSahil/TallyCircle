@@ -70,7 +70,7 @@ export async function ensureUserProfile(firebaseUser: User): Promise<UserPrivate
   const fullName = (firebaseUser.displayName || email.split('@')[0] || 'TallyCircle User').slice(0, 80);
   const baseHandle = normalizeHandle(email.split('@')[0] || fullName);
   const handle = `${baseHandle.slice(0, 24)}_${firebaseUser.uid.slice(0, 4).toLowerCase()}`;
-  const photoUrl = (firebaseUser.photoURL || '').slice(0, 500);
+  const photoUrl = (firebaseUser.photoURL || '').slice(0, 250000);
 
   const emailKey = `email_${await sha256Hex(email)}`;
   const handleKey = `handle_${handle}`;
@@ -141,7 +141,7 @@ export async function updateUserProfile(
   const fullName = (updates.fullName ?? current.fullName).trim().slice(0, 80) || current.fullName;
   const phone = (updates.phone ?? current.phone ?? '').trim().slice(0, 30);
   const upiId = (updates.upiId ?? current.upiId ?? '').trim().slice(0, 100);
-  const photoUrl = (updates.photoUrl ?? current.photoUrl ?? '').trim().slice(0, 500);
+  const photoUrl = (updates.photoUrl ?? current.photoUrl ?? '').trim().slice(0, 250000);
   const newHandle = updates.handle ? normalizeHandle(updates.handle) : current.handle;
   const theme = updates.theme ?? current.theme ?? 'system';
   const preferredCurrency: CurrencyCode = isSupportedCurrency(updates.preferredCurrency)

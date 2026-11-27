@@ -7,10 +7,11 @@
 4. **No Cross-Group Access**: Accessing expenses, settlements, notes, or group activities under `/groups/{groupId}` requires active membership (`request.auth.uid in get(/databases/$(database)/documents/groups/$(groupId)).data.memberUids`). Friendship does not grant group access.
 5. **No Duplicate Friendships**: Friendship documents use deterministic IDs `${minUid}_${maxUid}`, and creation requires `requesterUid == request.auth.uid` and `status == 'pending'`.
 6. **Atomic Invite Redemption**: Joining a group via invite requires a valid, unexpired, under-limit `/groupInvites/{token}` document for that exact `groupId` updated atomically (`usesCount + 1`) in the same write batch (`getAfter`).
-7. **Terminal Settlement Locking**: Once a settlement reaches `status == 'confirmed'`, it is immutable and cannot be updated or deleted. Only the receiver (`toUid`) may confirm or dispute a settlement.
-8. **Strict Integer Money & Bounded Arrays**: All monetary fields (`amountPaise`) are integers `> 0`, arrays are strictly bounded (`<= 50` or `<= 100`), and all string fields enforce `.size()` bounds.
+7. **Terminal Settlement Locking**: Once a settlement reaches `status == 'confirmed'`, it is immutable and cannot be updated or deleted independently. Only the receiver (`toUid`) may confirm or dispute a settlement. Pending/unconfirmed settlements can be edited without altering `status`, `fromUid`, `toUid`, or `createdBy`.
+8. **Strict Integer Money & Bounded Arrays**: All monetary fields (`amountPaise`) are integers `> 0`, arrays are strictly bounded (`<= 50` or `<= 100`), and all string fields enforce `.size()` bounds (`photoUrl <= 250000` for compressed JPEG avatars).
+9. **Atomic Group Cascade Deletion & Isolated Friend Annotations**: Deleting historical `activities` or `confirmed` settlements is strictly rejected (`PERMISSION_DENIED`) unless `!existsAfter(/groups/{groupId})` in the same atomic batch. In accepted friendships, each user may only write their own `uid` key inside `nicknames`/`notes` maps.
 
-## 2. The "Dirty Dozen" Adversarial Payloads
+## 2. The "Dirty Dozen" (+ Extended) Adversarial Payloads
 1. **Unverified Email Write**: Authenticated user with `email_verified: false` tries to create `/groups/g1`. Expected: `PERMISSION_DENIED`.
 2. **Cross-User PII Read**: User B calls `get(/users/userA)` to read User A's private email/phone. Expected: `PERMISSION_DENIED`.
 3. **User Enumeration Scrape**: User A runs `list` on `/userLookup` or `/publicProfiles` without `uid == auth.uid`. Expected: `PERMISSION_DENIED`.
@@ -23,3 +24,5 @@
 10. **Payer Self-Confirming Settlement**: Debtor (`fromUid`) attempts to update settlement `status` to `'confirmed'`. Expected: `PERMISSION_DENIED`.
 11. **Mutating Confirmed Settlement**: Group member attempts to edit `amountPaise` or `status` on an already `'confirmed'` settlement. Expected: `PERMISSION_DENIED`.
 12. **Oversized ID Poisoning**: Member tries to create `/groups/{150-char-invalid-id!}`. Expected: `PERMISSION_DENIED`.
+13. **Cross-Friend Note Overwrite**: Accepted friend User A attempts to overwrite `notes['userB']` or inject an arbitrary key inside `/friendships/userA_userB`. Expected: `PERMISSION_DENIED`.
+14. **Pending Settlement Status Escalation**: Payer attempts to sneak `status: 'confirmed'` while calling `updatePendingSettlement`. Expected: `PERMISSION_DENIED`.

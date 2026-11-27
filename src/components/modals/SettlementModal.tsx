@@ -5,7 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useAppData } from '../../contexts/AppDataContext';
 import { useToast } from '../../contexts/ToastContext';
 import type { Group, Settlement, SettlementMethod } from '../../types';
-import { recordSettlement } from '../../services/settlementService';
+import { recordSettlement, updatePendingSettlement } from '../../services/settlementService';
 import { formatINR, inrToPaise, paiseToInputString } from '../../utils/finance';
 import { buildUpiUri } from '../../utils/helpers';
 import { Button, InputField, Modal } from '../ui/Primitives';
@@ -15,6 +15,7 @@ export function SettlementModal({
   onClose,
   group,
   existingSettlements,
+  editingSettlement,
   initialFromUid,
   initialToUid,
   initialAmountPaise,
@@ -23,6 +24,7 @@ export function SettlementModal({
   onClose: () => void;
   group: Group;
   existingSettlements: Settlement[];
+  editingSettlement?: Settlement | null;
   initialFromUid?: string;
   initialToUid?: string;
   initialAmountPaise?: number;
@@ -50,6 +52,15 @@ export function SettlementModal({
 
   useEffect(() => {
     if (!open) return;
+    if (editingSettlement) {
+      setFromUid(editingSettlement.fromUid);
+      setToUid(editingSettlement.toUid);
+      setAmountInput(paiseToInputString(editingSettlement.amountPaise));
+      setMethod(editingSettlement.method);
+      setUpiRef(editingSettlement.upiTransactionRef || '');
+      setNote(editingSettlement.note || '');
+      return;
+    }
     const defaultFrom = initialFromUid || profile?.uid || members[0]?.uid || '';
     const defaultTo =
       initialToUid ||
@@ -61,7 +72,7 @@ export function SettlementModal({
     setMethod('upi');
     setUpiRef('');
     setNote('');
-  }, [open, initialFromUid, initialToUid, initialAmountPaise, profile?.uid]);
+  }, [open, editingSettlement, initialFromUid, initialToUid, initialAmountPaise, profile?.uid]);
 
   const receiverProfile = profilesMap[toUid];
   const receiverUpiId = receiverProfile?.upiId?.trim() || '';
@@ -91,27 +102,37 @@ export function SettlementModal({
 
     setSubmitting(true);
     try {
-      await recordSettlement(profile, group, {
-        fromUid,
-        fromName: group.memberNames[fromUid] || 'Member',
-        toUid,
-        toName: group.memberNames[toUid] || 'Member',
-        amountPaise,
-        method,
-        upiTransactionRef: upiRef,
-        note,
-        existingSettlements,
-      });
-      showToast('Settlement recorded', {
-        description:
-          profile.uid === fromUid
-            ? 'Sent for receiver confirmation.'
-            : 'Added to pending settlements.',
-        variant: 'success',
-      });
+      if (editingSettlement) {
+        await updatePendingSettlement(profile, group, editingSettlement, {
+          amountPaise,
+          method,
+          upiTransactionRef: upiRef,
+          note,
+        });
+        showToast('Pending settlement updated', { variant: 'success' });
+      } else {
+        await recordSettlement(profile, group, {
+          fromUid,
+          fromName: group.memberNames[fromUid] || 'Member',
+          toUid,
+          toName: group.memberNames[toUid] || 'Member',
+          amountPaise,
+          method,
+          upiTransactionRef: upiRef,
+          note,
+          existingSettlements,
+        });
+        showToast('Settlement recorded', {
+          description:
+            profile.uid === fromUid
+              ? 'Sent for receiver confirmation.'
+              : 'Added to pending settlements.',
+          variant: 'success',
+        });
+      }
       onClose();
     } catch (err: unknown) {
-      showToast('Could not record settlement', {
+      showToast(editingSettlement ? 'Could not update settlement' : 'Could not record settlement', {
         description: err instanceof Error ? err.message : 'Try again.',
         variant: 'error',
       });
@@ -124,7 +145,7 @@ export function SettlementModal({
     <Modal
       open={open}
       onClose={onClose}
-      title="Record Settlement"
+      title={editingSettlement ? 'Edit Pending Settlement' : 'Record Settlement'}
       subtitle="Only confirmed payments reduce group balances. External UPI/cash happens outside the app."
     >
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -135,8 +156,9 @@ export function SettlementModal({
             </label>
             <select
               value={fromUid}
+              disabled={Boolean(editingSettlement)}
               onChange={(e) => setFromUid(e.target.value)}
-              className="w-full h-10 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm text-slate-900 dark:text-slate-100"
+              className="w-full h-10 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm text-slate-900 dark:text-slate-100 disabled:opacity-60"
             >
               {members.map((m) => (
                 <option key={m.uid} value={m.uid}>
@@ -151,8 +173,9 @@ export function SettlementModal({
             </label>
             <select
               value={toUid}
+              disabled={Boolean(editingSettlement)}
               onChange={(e) => setToUid(e.target.value)}
-              className="w-full h-10 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm text-slate-900 dark:text-slate-100"
+              className="w-full h-10 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm text-slate-900 dark:text-slate-100 disabled:opacity-60"
             >
               {members.map((m) => (
                 <option key={m.uid} value={m.uid}>
@@ -263,7 +286,11 @@ export function SettlementModal({
             Cancel
           </Button>
           <Button type="submit" loading={submitting} className="w-full sm:w-auto">
-            {profile?.uid === fromUid ? 'Submit for Confirmation' : 'Create Payment Request'}
+            {editingSettlement
+              ? 'Save Changes'
+              : profile?.uid === fromUid
+                ? 'Submit for Confirmation'
+                : 'Create Payment Request'}
           </Button>
         </div>
       </form>

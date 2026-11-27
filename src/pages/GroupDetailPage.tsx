@@ -49,6 +49,7 @@ import {
 import {
   addMemberToGroup,
   createGroupInvite,
+  deleteGroupWithData,
   removeOrLeaveMember,
   revokeGroupInvite,
   subscribeMyGroupInvites,
@@ -104,6 +105,7 @@ export function GroupDetailPage() {
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [detailExpense, setDetailExpense] = useState<Expense | null>(null);
   const [settlementModalOpen, setSettlementModalOpen] = useState(false);
+  const [editingSettlement, setEditingSettlement] = useState<Settlement | null>(null);
   const [settlementPrefill, setSettlementPrefill] = useState<{
     fromUid?: string;
     toUid?: string;
@@ -113,7 +115,10 @@ export function GroupDetailPage() {
   // Confirmations
   const [confirmArchiveOpen, setConfirmArchiveOpen] = useState(false);
   const [confirmLeaveOpen, setConfirmLeaveOpen] = useState(false);
+  const [confirmDeleteGroupOpen, setConfirmDeleteGroupOpen] = useState(false);
   const [removeMemberTarget, setRemoveMemberTarget] = useState<{ uid: string; name: string } | null>(null);
+  const [cancelSettlementTarget, setCancelSettlementTarget] = useState<Settlement | null>(null);
+  const [revokeInviteToken, setRevokeInviteToken] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
 
   // Invites
@@ -269,6 +274,58 @@ export function GroupDetailPage() {
       setRemoveMemberTarget(null);
     } catch (err: unknown) {
       showToast('Could not remove member', {
+        description: err instanceof Error ? err.message : 'Try again.',
+        variant: 'error',
+      });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleDeleteGroup = async () => {
+    if (!profile) return;
+    setActionLoading(true);
+    try {
+      await deleteGroupWithData(profile, group);
+      showToast(`Deleted "${group.name}"`, { variant: 'info' });
+      setConfirmDeleteGroupOpen(false);
+      navigate('/groups');
+    } catch (err: unknown) {
+      showToast('Could not delete group', {
+        description: err instanceof Error ? err.message : 'Try again.',
+        variant: 'error',
+      });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleCancelSettlement = async () => {
+    if (!cancelSettlementTarget) return;
+    setActionLoading(true);
+    try {
+      await deleteSettlement(group.id, cancelSettlementTarget.id);
+      showToast('Settlement cancelled and removed', { variant: 'info' });
+      setCancelSettlementTarget(null);
+    } catch (err: unknown) {
+      showToast('Could not cancel settlement', {
+        description: err instanceof Error ? err.message : 'Try again.',
+        variant: 'error',
+      });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRevokeInvite = async () => {
+    if (!revokeInviteToken) return;
+    setActionLoading(true);
+    try {
+      await revokeGroupInvite(revokeInviteToken);
+      showToast('Invite link revoked', { variant: 'info' });
+      setRevokeInviteToken(null);
+    } catch (err: unknown) {
+      showToast('Could not revoke invite', {
         description: err instanceof Error ? err.message : 'Try again.',
         variant: 'error',
       });
@@ -440,6 +497,7 @@ export function GroupDetailPage() {
               size="sm"
               variant="outline"
               onClick={() => {
+                setEditingSettlement(null);
                 setSettlementPrefill({});
                 setSettlementModalOpen(true);
               }}
@@ -458,6 +516,17 @@ export function GroupDetailPage() {
             >
               <Plus className="w-3.5 h-3.5" />
               Add Expense
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label="Delete group"
+              title="Delete group"
+              className="text-red-600 dark:text-red-400 col-span-2 sm:col-span-1 w-full sm:w-auto"
+              onClick={() => setConfirmDeleteGroupOpen(true)}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete
             </Button>
           </div>
         </div>
@@ -752,6 +821,7 @@ export function GroupDetailPage() {
                       <Button
                         size="sm"
                         onClick={() => {
+                          setEditingSettlement(null);
                           setSettlementPrefill({
                             fromUid: debt.fromUid,
                             toUid: debt.toUid,
@@ -783,6 +853,7 @@ export function GroupDetailPage() {
                 <Button
                   size="sm"
                   onClick={() => {
+                    setEditingSettlement(null);
                     setSettlementPrefill({});
                     setSettlementModalOpen(true);
                   }}
@@ -887,17 +958,30 @@ export function GroupDetailPage() {
 
                       {st.status !== 'confirmed' &&
                         (st.createdBy === profile?.uid || isPayer || isReceiver) && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="text-red-600 dark:text-red-400"
-                            onClick={async () => {
-                              await deleteSettlement(group.id, st.id);
-                              showToast('Settlement removed', { variant: 'info' });
-                            }}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </Button>
+                          <>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              aria-label="Edit pending settlement"
+                              title="Edit pending settlement"
+                              onClick={() => {
+                                setEditingSettlement(st);
+                                setSettlementModalOpen(true);
+                              }}
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              aria-label="Cancel pending settlement"
+                              title="Cancel pending settlement"
+                              className="text-red-600 dark:text-red-400"
+                              onClick={() => setCancelSettlementTarget(st)}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </>
                         )}
                     </div>
 
@@ -990,15 +1074,25 @@ export function GroupDetailPage() {
                   Every member has equal permissions. Historical expenses are preserved if someone leaves.
                 </p>
               </div>
-              <Button
-                size="sm"
-                variant="outline"
-                className="text-red-600 dark:text-red-400"
-                onClick={() => setConfirmLeaveOpen(true)}
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                Leave
-              </Button>
+              <div className="flex items-center gap-2 shrink-0">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-red-600 dark:text-red-400"
+                  onClick={() => setConfirmLeaveOpen(true)}
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  Leave
+                </Button>
+                <Button
+                  size="sm"
+                  variant="danger"
+                  onClick={() => setConfirmDeleteGroupOpen(true)}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Delete Group
+                </Button>
+              </div>
             </div>
 
             {friendsNotInGroup.length > 0 && (
@@ -1110,7 +1204,7 @@ export function GroupDetailPage() {
                         </span>
                         <button
                           type="button"
-                          onClick={() => revokeGroupInvite(inv.token)}
+                          onClick={() => setRevokeInviteToken(inv.token)}
                           className="text-red-600 dark:text-red-400 hover:underline cursor-pointer"
                         >
                           Revoke
@@ -1195,9 +1289,13 @@ export function GroupDetailPage() {
 
       <SettlementModal
         open={settlementModalOpen}
-        onClose={() => setSettlementModalOpen(false)}
+        onClose={() => {
+          setSettlementModalOpen(false);
+          setEditingSettlement(null);
+        }}
         group={group}
         existingSettlements={settlements}
+        editingSettlement={editingSettlement}
         initialFromUid={settlementPrefill.fromUid}
         initialToUid={settlementPrefill.toUid}
         initialAmountPaise={settlementPrefill.amountPaise}
@@ -1332,6 +1430,40 @@ export function GroupDetailPage() {
         title={`Remove ${removeMemberTarget?.name}?`}
         message={`Removing ${removeMemberTarget?.name} revokes their access to "${group.name}". Historical expense records will remain preserved.`}
         confirmLabel="Remove Member"
+        loading={actionLoading}
+      />
+
+      <ConfirmModal
+        open={confirmDeleteGroupOpen}
+        onClose={() => setConfirmDeleteGroupOpen(false)}
+        onConfirm={handleDeleteGroup}
+        title={`Delete "${group.name}" permanently?`}
+        message={`This permanently deletes "${group.name}", along with all ${expenses.length} expense(s), notes, settlements, and activity logs. This action cannot be undone.`}
+        confirmLabel="Delete Group"
+        loading={actionLoading}
+      />
+
+      <ConfirmModal
+        open={Boolean(cancelSettlementTarget)}
+        onClose={() => setCancelSettlementTarget(null)}
+        onConfirm={handleCancelSettlement}
+        title="Cancel pending settlement?"
+        message={
+          cancelSettlementTarget
+            ? `Cancel and remove the ${formatAmount(cancelSettlementTarget.amountPaise)} settlement (${cancelSettlementTarget.fromName} → ${cancelSettlementTarget.toName})?`
+            : ''
+        }
+        confirmLabel="Cancel Settlement"
+        loading={actionLoading}
+      />
+
+      <ConfirmModal
+        open={Boolean(revokeInviteToken)}
+        onClose={() => setRevokeInviteToken(null)}
+        onConfirm={handleRevokeInvite}
+        title="Revoke group invite link?"
+        message="Anyone with this link will no longer be able to join the group using it."
+        confirmLabel="Revoke Invite"
         loading={actionLoading}
       />
     </div>

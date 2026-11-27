@@ -2,7 +2,7 @@ import {
   CURRENCY_CODES,
   SUPPORTED_CURRENCIES,
   type CurrencyCode,
-  type Expense,
+  type ExpensePayer,
   type ExpenseShare,
   type MemberBalance,
   type Settlement,
@@ -302,12 +302,17 @@ export function computeSplits(
  */
 export function computeGroupBalances(
   memberNames: Record<string, string>,
-  expenses: Expense[],
-  settlements: Settlement[]
+  expenses: Array<{
+    amountPaise: number;
+    payers: Array<Pick<ExpensePayer, 'uid' | 'name' | 'amountPaise'>>;
+    shares: Array<Pick<ExpenseShare, 'uid' | 'name' | 'sharePaise'>>;
+  }>,
+  settlements: Pick<Settlement, 'fromUid' | 'fromName' | 'toUid' | 'toName' | 'amountPaise' | 'status'>[]
 ): {
   totalExpenditurePaise: number;
   memberBalances: MemberBalance[];
   simplifiedDebts: SimplifiedDebt[];
+  zeroSumCheckPaise: number;
 } {
   const map = new Map<string, MemberBalance>();
 
@@ -331,16 +336,16 @@ export function computeGroupBalances(
   let totalExpenditurePaise = 0;
 
   for (const exp of expenses) {
-    totalExpenditurePaise += exp.amountPaise;
+    totalExpenditurePaise += Math.round(exp.amountPaise || 0);
 
     for (const payer of exp.payers) {
       const m = ensureMember(payer.uid, payer.name);
-      m.expensePaidPaise += payer.amountPaise;
+      m.expensePaidPaise += Math.round(payer.amountPaise || 0);
     }
 
     for (const share of exp.shares) {
       const m = ensureMember(share.uid, share.name);
-      m.expenseSharePaise += share.sharePaise;
+      m.expenseSharePaise += Math.round(share.sharePaise || 0);
     }
   }
 
@@ -349,15 +354,18 @@ export function computeGroupBalances(
     if (st.status !== 'confirmed') continue;
     const payer = ensureMember(st.fromUid, st.fromName);
     const receiver = ensureMember(st.toUid, st.toName);
-    payer.settlementPaidPaise += st.amountPaise;
-    receiver.settlementReceivedPaise += st.amountPaise;
+    const amt = Math.round(st.amountPaise || 0);
+    payer.settlementPaidPaise += amt;
+    receiver.settlementReceivedPaise += amt;
   }
 
   const memberBalances: MemberBalance[] = [];
+  let zeroSumCheckPaise = 0;
   for (const m of map.values()) {
     const totalPaid = m.expensePaidPaise + m.settlementPaidPaise;
     const totalObligation = m.expenseSharePaise + m.settlementReceivedPaise;
     m.netBalancePaise = totalPaid - totalObligation;
+    zeroSumCheckPaise += m.netBalancePaise;
     memberBalances.push(m);
   }
 
@@ -368,7 +376,16 @@ export function computeGroupBalances(
     totalExpenditurePaise,
     memberBalances,
     simplifiedDebts,
+    zeroSumCheckPaise,
   };
+}
+
+/**
+ * Verifies the double-entry zero-sum invariant across all member balances.
+ */
+export function verifyZeroSumBalance(balances: MemberBalance[]): boolean {
+  const sum = balances.reduce((acc, b) => acc + b.netBalancePaise, 0);
+  return sum === 0;
 }
 
 /**

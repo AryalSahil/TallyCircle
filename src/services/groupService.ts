@@ -4,9 +4,11 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   Timestamp,
@@ -14,12 +16,16 @@ import {
   writeBatch,
   Unsubscribe,
 } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, handleFirestoreError, logFirestoreError, OperationType } from '../lib/firebase';
 import type { Group, GroupActivity, GroupInvite, PublicProfile, UserPrivateProfile } from '../types';
 import { generateToken } from '../utils/helpers';
 import { notifyGroupMembers } from './notificationService';
 
-export function subscribeGroups(uid: string, callback: (groups: Group[]) => void): Unsubscribe {
+export function subscribeGroups(
+  uid: string,
+  callback: (groups: Group[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
   const q = query(
     collection(db, 'groups'),
     where('memberUids', 'array-contains', uid),
@@ -35,12 +41,17 @@ export function subscribeGroups(uid: string, callback: (groups: Group[]) => void
       callback(list);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'groups');
+      const info = logFirestoreError(error, OperationType.LIST, 'groups');
+      if (onError) onError(new Error(info.error));
     }
   );
 }
 
-export function subscribeGroup(groupId: string, callback: (group: Group | null) => void): Unsubscribe {
+export function subscribeGroup(
+  groupId: string,
+  callback: (group: Group | null) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
   return onSnapshot(
     doc(db, 'groups', groupId),
     (snap) => {
@@ -51,14 +62,16 @@ export function subscribeGroup(groupId: string, callback: (group: Group | null) 
       callback({ id: snap.id, ...(snap.data() as Omit<Group, 'id'>) });
     },
     (error) => {
-      handleFirestoreError(error, OperationType.GET, `groups/${groupId}`);
+      const info = logFirestoreError(error, OperationType.GET, `groups/${groupId}`);
+      if (onError) onError(new Error(info.error));
     }
   );
 }
 
 export function subscribeGroupActivities(
   groupId: string,
-  callback: (items: GroupActivity[]) => void
+  callback: (items: GroupActivity[]) => void,
+  onError?: (err: Error) => void
 ): Unsubscribe {
   const q = query(
     collection(db, 'groups', groupId, 'activities'),
@@ -75,7 +88,8 @@ export function subscribeGroupActivities(
       );
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, `groups/${groupId}/activities`);
+      const info = logFirestoreError(error, OperationType.LIST, `groups/${groupId}/activities`);
+      if (onError) onError(new Error(info.error));
     }
   );
 }
@@ -288,6 +302,79 @@ export async function removeOrLeaveMember(
   }
 }
 
+export async function deleteGroupWithData(
+  me: UserPrivateProfile,
+  group: Group
+): Promise<void> {
+  if (!group.memberUids.includes(me.uid)) {
+    throw new Error('Only group members can delete this group.');
+  }
+
+  const [expensesSnap, settlementsSnap, activitiesSnap, myInvitesSnap] = await Promise.all([
+    getDocs(collection(db, 'groups', group.id, 'expenses')),
+    getDocs(collection(db, 'groups', group.id, 'settlements')),
+    getDocs(collection(db, 'groups', group.id, 'activities')),
+    getDocs(query(collection(db, 'groupInvites'), where('createdBy', '==', me.uid))),
+  ]);
+
+  const noteSnaps = await Promise.all(
+    expensesSnap.docs.map((expDoc) =>
+      getDocs(collection(db, 'groups', group.id, 'expenses', expDoc.id, 'notes'))
+    )
+  );
+
+  const refsToDelete = [
+    ...noteSnaps.flatMap((snap) => snap.docs.map((d) => d.ref)),
+    ...expensesSnap.docs.map((d) => d.ref),
+    ...settlementsSnap.docs.map((d) => d.ref),
+    ...activitiesSnap.docs.map((d) => d.ref),
+    ...myInvitesSnap.docs
+      .filter((d) => (d.data() as GroupInvite).groupId === group.id)
+      .map((d) => d.ref),
+  ];
+
+  // Delete excess sub-documents in chunks first if large, keeping final <= 450 ops atomic with group deletion
+  if (refsToDelete.length <= 450) {
+    const batch = writeBatch(db);
+    for (const ref of refsToDelete) {
+      batch.delete(ref);
+    }
+    batch.delete(doc(db, 'groups', group.id));
+    try {
+      await batch.commit();
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `groups/${group.id}`);
+    }
+    return;
+  }
+
+  // Fallback for very large groups: delete deletable expenses first in chunks, then atomic final batch
+  const head = refsToDelete.slice(0, refsToDelete.length - 450);
+  const tail = refsToDelete.slice(refsToDelete.length - 450);
+  for (let i = 0; i < head.length; i += 450) {
+    const chunkBatch = writeBatch(db);
+    for (const ref of head.slice(i, i + 450)) {
+      chunkBatch.delete(ref);
+    }
+    try {
+      await chunkBatch.commit();
+    } catch {
+      // Some activity/confirmed settlement docs require atomic deletion with parent group; tail handles remaining
+    }
+  }
+
+  const finalBatch = writeBatch(db);
+  for (const ref of tail) {
+    finalBatch.delete(ref);
+  }
+  finalBatch.delete(doc(db, 'groups', group.id));
+  try {
+    await finalBatch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `groups/${group.id}`);
+  }
+}
+
 export async function createGroupInvite(
   me: UserPrivateProfile,
   group: Group,
@@ -321,7 +408,8 @@ export async function createGroupInvite(
 
 export function subscribeMyGroupInvites(
   uid: string,
-  callback: (invites: GroupInvite[]) => void
+  callback: (invites: GroupInvite[]) => void,
+  onError?: (err: Error) => void
 ): Unsubscribe {
   const q = query(
     collection(db, 'groupInvites'),
@@ -334,7 +422,8 @@ export function subscribeMyGroupInvites(
       callback(snap.docs.map((d) => d.data() as GroupInvite));
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'groupInvites');
+      const info = logFirestoreError(error, OperationType.LIST, 'groupInvites');
+      if (onError) onError(new Error(info.error));
     }
   );
 }
@@ -361,59 +450,81 @@ export async function joinGroupByToken(
   token: string
 ): Promise<{ groupId: string; groupName: string; alreadyMember: boolean }> {
   const inviteRef = doc(db, 'groupInvites', token);
-  const inviteSnap = await getDoc(inviteRef);
-  if (!inviteSnap.exists()) {
+  const initialInviteSnap = await getDoc(inviteRef);
+  if (!initialInviteSnap.exists()) {
     throw new Error('This group invitation link is invalid or has been revoked.');
   }
-
-  const invite = inviteSnap.data() as GroupInvite;
-  if (invite.expiresAt.toDate().getTime() < Date.now()) {
-    throw new Error('This group invitation link has expired.');
-  }
-  if (invite.usesCount >= invite.maxUses) {
-    throw new Error('This group invitation link has reached its maximum usage limit.');
-  }
+  const initialInvite = initialInviteSnap.data() as GroupInvite;
 
   // Check if already a member (if getDoc succeeds, they are already in memberUids)
   try {
-    const existingGroupSnap = await getDoc(doc(db, 'groups', invite.groupId));
+    const existingGroupSnap = await getDoc(doc(db, 'groups', initialInvite.groupId));
     if (existingGroupSnap.exists()) {
-      return { groupId: invite.groupId, groupName: invite.groupName, alreadyMember: true };
+      return {
+        groupId: initialInvite.groupId,
+        groupName: initialInvite.groupName,
+        alreadyMember: true,
+      };
     }
   } catch {
-    // Expected permission-denied if user is not yet a member; proceed with atomic join batch
+    // Expected permission-denied if user is not yet a member; proceed with atomic join transaction
   }
-
-  const batch = writeBatch(db);
-  batch.update(inviteRef, {
-    usesCount: invite.usesCount + 1,
-    usedBy: [...invite.usedBy, me.uid],
-    updatedAt: serverTimestamp(),
-  });
-
-  batch.update(doc(db, 'groups', invite.groupId), {
-    memberUids: arrayUnion(me.uid),
-    [`memberNames.${me.uid}`]: me.fullName,
-    lastJoinToken: token,
-    updatedAt: serverTimestamp(),
-  });
-
-  const actRef = doc(collection(db, 'groups', invite.groupId, 'activities'));
-  batch.set(actRef, {
-    groupId: invite.groupId,
-    actorUid: me.uid,
-    actorName: me.fullName,
-    type: 'member_joined',
-    summary: `${me.fullName} joined via invitation link`,
-    relatedId: me.uid,
-    createdAt: serverTimestamp(),
-  });
 
   try {
-    await batch.commit();
-  } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, `groups/${invite.groupId}`);
-  }
+    const result = await runTransaction(db, async (tx) => {
+      const inviteSnap = await tx.get(inviteRef);
+      if (!inviteSnap.exists()) {
+        throw new Error('This group invitation link is invalid or has been revoked.');
+      }
 
-  return { groupId: invite.groupId, groupName: invite.groupName, alreadyMember: false };
+      const invite = inviteSnap.data() as GroupInvite;
+      if (invite.expiresAt.toDate().getTime() < Date.now()) {
+        throw new Error('This group invitation link has expired.');
+      }
+      if (invite.usesCount >= invite.maxUses) {
+        throw new Error('This group invitation link has reached its maximum usage limit.');
+      }
+      if (invite.usedBy.includes(me.uid)) {
+        return { groupId: invite.groupId, groupName: invite.groupName, alreadyMember: true };
+      }
+
+      tx.update(inviteRef, {
+        usesCount: invite.usesCount + 1,
+        usedBy: [...invite.usedBy, me.uid],
+        updatedAt: serverTimestamp(),
+      });
+
+      tx.update(doc(db, 'groups', invite.groupId), {
+        memberUids: arrayUnion(me.uid),
+        [`memberNames.${me.uid}`]: me.fullName,
+        lastJoinToken: token,
+        updatedAt: serverTimestamp(),
+      });
+
+      const actRef = doc(collection(db, 'groups', invite.groupId, 'activities'));
+      tx.set(actRef, {
+        groupId: invite.groupId,
+        actorUid: me.uid,
+        actorName: me.fullName,
+        type: 'member_joined',
+        summary: `${me.fullName} joined via invitation link`,
+        relatedId: me.uid,
+        createdAt: serverTimestamp(),
+      });
+
+      return { groupId: invite.groupId, groupName: invite.groupName, alreadyMember: false };
+    });
+
+    return result;
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      (err.message.includes('invalid') ||
+        err.message.includes('expired') ||
+        err.message.includes('maximum usage limit'))
+    ) {
+      throw err;
+    }
+    handleFirestoreError(err, OperationType.WRITE, `groups/${initialInvite.groupId}`);
+  }
 }

@@ -6,6 +6,7 @@ import {
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   Timestamp,
@@ -14,14 +15,15 @@ import {
   writeBatch,
   Unsubscribe,
 } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, handleFirestoreError, logFirestoreError, OperationType } from '../lib/firebase';
 import type { FriendInvite, Friendship, UserPrivateProfile } from '../types';
 import { deterministicFriendshipId, generateToken } from '../utils/helpers';
 import { createNotification } from './notificationService';
 
 export function subscribeFriendships(
   uid: string,
-  callback: (items: Friendship[]) => void
+  callback: (items: Friendship[]) => void,
+  onError?: (err: Error) => void
 ): Unsubscribe {
   const q = query(collection(db, 'friendships'), where('users', 'array-contains', uid));
   return onSnapshot(
@@ -34,7 +36,8 @@ export function subscribeFriendships(
       callback(items);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'friendships');
+      const info = logFirestoreError(error, OperationType.LIST, 'friendships');
+      if (onError) onError(new Error(info.error));
     }
   );
 }
@@ -131,6 +134,34 @@ export async function respondFriendRequest(
   }
 }
 
+export async function updateFriendDetails(
+  me: UserPrivateProfile,
+  friendship: Friendship,
+  updates: { nickname?: string; note?: string }
+): Promise<void> {
+  if (friendship.status !== 'accepted') {
+    throw new Error('Only accepted friends can be annotated.');
+  }
+  const nextNicknames = {
+    ...(friendship.nicknames || {}),
+    [me.uid]: (updates.nickname ?? '').trim().slice(0, 60),
+  };
+  const nextNotes = {
+    ...(friendship.notes || {}),
+    [me.uid]: (updates.note ?? '').trim().slice(0, 250),
+  };
+
+  try {
+    await updateDoc(doc(db, 'friendships', friendship.id), {
+      nicknames: nextNicknames,
+      notes: nextNotes,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `friendships/${friendship.id}`);
+  }
+}
+
 export async function removeFriend(friendshipId: string): Promise<void> {
   try {
     await deleteDoc(doc(db, 'friendships', friendshipId));
@@ -170,7 +201,8 @@ export async function createFriendInvite(
 
 export function subscribeMyFriendInvites(
   uid: string,
-  callback: (items: FriendInvite[]) => void
+  callback: (items: FriendInvite[]) => void,
+  onError?: (err: Error) => void
 ): Unsubscribe {
   const q = query(
     collection(db, 'friendInvites'),
@@ -183,7 +215,8 @@ export function subscribeMyFriendInvites(
       callback(snap.docs.map((d) => d.data() as FriendInvite));
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'friendInvites');
+      const info = logFirestoreError(error, OperationType.LIST, 'friendInvites');
+      if (onError) onError(new Error(info.error));
     }
   );
 }
@@ -202,20 +235,44 @@ export async function redeemFriendInvite(
   token: string
 ): Promise<{ creatorName: string; status: 'requested' | 'accepted' | 'already_friends' }> {
   const inviteRef = doc(db, 'friendInvites', token);
-  const inviteSnap = await getDoc(inviteRef);
-  if (!inviteSnap.exists()) {
-    throw new Error('This friend invitation link is invalid or was revoked.');
-  }
 
-  const invite = inviteSnap.data() as FriendInvite;
-  if (invite.creatorUid === me.uid) {
-    throw new Error('You cannot redeem your own friend invitation link.');
-  }
-  if (invite.expiresAt.toDate().getTime() < Date.now()) {
-    throw new Error('This friend invitation link has expired.');
-  }
-  if (invite.usesCount >= invite.maxUses) {
-    throw new Error('This friend invitation link has reached its usage limit.');
+  let invite: FriendInvite;
+  try {
+    invite = await runTransaction(db, async (tx) => {
+      const inviteSnap = await tx.get(inviteRef);
+      if (!inviteSnap.exists()) {
+        throw new Error('This friend invitation link is invalid or was revoked.');
+      }
+
+      const data = inviteSnap.data() as FriendInvite;
+      if (data.creatorUid === me.uid) {
+        throw new Error('You cannot redeem your own friend invitation link.');
+      }
+      if (data.expiresAt.toDate().getTime() < Date.now()) {
+        throw new Error('This friend invitation link has expired.');
+      }
+      if (!data.usedBy.includes(me.uid)) {
+        if (data.usesCount >= data.maxUses) {
+          throw new Error('This friend invitation link has reached its usage limit.');
+        }
+        tx.update(inviteRef, {
+          usesCount: data.usesCount + 1,
+          usedBy: [...data.usedBy, me.uid],
+          updatedAt: serverTimestamp(),
+        });
+      }
+      return data;
+    });
+  } catch (err) {
+    if (err instanceof Error && (
+      err.message.includes('invalid') ||
+      err.message.includes('expired') ||
+      err.message.includes('usage limit') ||
+      err.message.includes('own friend')
+    )) {
+      throw err;
+    }
+    handleFirestoreError(err, OperationType.UPDATE, `friendInvites/${token}`);
   }
 
   const friendshipId = deterministicFriendshipId(me.uid, invite.creatorUid);
@@ -228,20 +285,6 @@ export async function redeemFriendInvite(
     if (existing.status === 'pending' && existing.recipientUid === me.uid) {
       await respondFriendRequest(me, { id: friendshipId, ...existing }, 'accepted');
       return { creatorName: invite.creatorName, status: 'accepted' };
-    }
-  }
-
-  if (!invite.usedBy.includes(me.uid)) {
-    const batch = writeBatch(db);
-    batch.update(inviteRef, {
-      usesCount: invite.usesCount + 1,
-      usedBy: [...invite.usedBy, me.uid],
-      updatedAt: serverTimestamp(),
-    });
-    try {
-      await batch.commit();
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `friendInvites/${token}`);
     }
   }
 

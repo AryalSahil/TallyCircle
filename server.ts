@@ -5,6 +5,12 @@ import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type } from '@google/genai';
 import firebaseConfig from './firebase-applet-config.json' with { type: 'json' };
+import {
+  computeGroupBalances,
+  computeSplits,
+  verifyZeroSumBalance,
+} from './src/utils/finance.js';
+import type { SplitMethod } from './src/types/index.js';
 
 dotenv.config();
 
@@ -85,9 +91,129 @@ const VALID_CATEGORIES = [
   'Other',
 ] as const;
 
-async function startServer() {
+const VALID_SPLIT_METHODS: SplitMethod[] = ['equal', 'unequal', 'percentage', 'shares'];
+
+export async function createServerApp(options: { withVite?: boolean } = {}) {
   const app = express();
   app.use(express.json({ limit: '4mb' }));
+
+  // Operational health check for uptime monitors and deployment readiness probes
+  app.get('/api/health', (_req: Request, res: Response) => {
+    res.json({
+      ok: true,
+      status: 'healthy',
+      service: 'tallycircle',
+      databaseId: firebaseConfig.firestoreDatabaseId,
+      aiConfigured: Boolean(ai),
+      uptimeSec: Math.round(process.uptime()),
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  // Server-side deterministic paise split calculator
+  app.post('/api/finance/compute-splits', verifyFirebaseAuth, (req: AuthedRequest, res: Response) => {
+    const { totalPaise, method, participants } = req.body as {
+      totalPaise?: unknown;
+      method?: unknown;
+      participants?: unknown;
+    };
+
+    if (
+      typeof totalPaise !== 'number' ||
+      !Number.isInteger(totalPaise) ||
+      totalPaise <= 0 ||
+      totalPaise > 1_000_000_000
+    ) {
+      res.status(400).json({ error: 'totalPaise must be a positive integer.' });
+      return;
+    }
+
+    if (typeof method !== 'string' || !VALID_SPLIT_METHODS.includes(method as SplitMethod)) {
+      res.status(400).json({ error: 'method must be equal, unequal, percentage, or shares.' });
+      return;
+    }
+
+    if (!Array.isArray(participants) || participants.length === 0 || participants.length > 50) {
+      res.status(400).json({ error: 'participants must be a non-empty array (max 50).' });
+      return;
+    }
+
+    const sanitizedParticipants = participants
+      .filter(
+        (p): p is { uid: string; name: string; rawValue?: number; value?: number } =>
+          Boolean(p) &&
+          typeof p === 'object' &&
+          typeof (p as { uid?: unknown }).uid === 'string' &&
+          typeof (p as { name?: unknown }).name === 'string'
+      )
+      .map((p) => {
+        const raw =
+          typeof p.rawValue === 'number' && Number.isFinite(p.rawValue)
+            ? p.rawValue
+            : typeof p.value === 'number' && Number.isFinite(p.value)
+              ? p.value
+              : 0;
+        return {
+          uid: p.uid.trim().slice(0, 128),
+          name: p.name.trim().slice(0, 80) || 'Member',
+          rawValue: raw,
+        };
+      });
+
+    if (sanitizedParticipants.length !== participants.length) {
+      res.status(400).json({ error: 'Each participant requires uid and name strings.' });
+      return;
+    }
+
+    const result = computeSplits(totalPaise, method as SplitMethod, sanitizedParticipants);
+    if (result.error) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+
+    res.json({
+      totalPaise,
+      method,
+      shares: result.shares,
+    });
+  });
+
+  // Server-side group ledger balance & zero-sum reconciliation verifier
+  app.post('/api/finance/reconcile', verifyFirebaseAuth, (req: AuthedRequest, res: Response) => {
+    const { memberNames, expenses, settlements } = req.body as {
+      memberNames?: Record<string, string>;
+      expenses?: Array<{
+        amountPaise: number;
+        payers: Array<{ uid: string; name: string; amountPaise: number }>;
+        shares: Array<{ uid: string; name: string; sharePaise: number }>;
+      }>;
+      settlements?: Array<{
+        fromUid: string;
+        fromName: string;
+        toUid: string;
+        toName: string;
+        amountPaise: number;
+        status: 'pending' | 'awaiting_confirmation' | 'confirmed' | 'disputed';
+      }>;
+    };
+
+    if (!memberNames || typeof memberNames !== 'object' || Array.isArray(memberNames)) {
+      res.status(400).json({ error: 'memberNames map is required.' });
+      return;
+    }
+    if (!Array.isArray(expenses) || !Array.isArray(settlements)) {
+      res.status(400).json({ error: 'expenses and settlements arrays are required.' });
+      return;
+    }
+
+    const computed = computeGroupBalances(memberNames, expenses, settlements);
+    const zeroSumValid = verifyZeroSumBalance(computed.memberBalances);
+
+    res.json({
+      ...computed,
+      zeroSumValid,
+    });
+  });
 
   // Low-latency smart expense parser & receipt scanner using gemini-3.1-flash-lite
   app.post('/api/ai/parse-expense', verifyFirebaseAuth, async (req: AuthedRequest, res: Response) => {
@@ -248,31 +374,54 @@ async function startServer() {
     }
   });
 
-  // Vite dev middleware or static production build
-  const isProd = process.env.NODE_ENV === 'production';
-  if (!isProd) {
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
+  // Structured API error handler (must precede Vite/static fallback)
+  app.use('/api', (err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    console.error('Unhandled API error:', err);
+    if (res.headersSent) return;
+    res.status(500).json({
+      error: process.env.NODE_ENV === 'production'
+        ? 'Internal server error'
+        : err instanceof Error
+          ? err.message
+          : 'Internal server error',
     });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.resolve(__dirname, 'dist');
-    if (fs.existsSync(distPath)) {
-      app.use(express.static(distPath));
-      app.get('*', (_req, res) => {
-        res.sendFile(path.join(distPath, 'index.html'));
+  });
+
+  if (options.withVite !== false) {
+    const isProd = process.env.NODE_ENV === 'production';
+    if (!isProd) {
+      const { createServer: createViteServer } = await import('vite');
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
       });
+      app.use(vite.middlewares);
+    } else {
+      const distPath = path.resolve(__dirname, 'dist');
+      if (fs.existsSync(distPath)) {
+        app.use(express.static(distPath));
+        app.get('*', (_req, res) => {
+          res.sendFile(path.join(distPath, 'index.html'));
+        });
+      }
     }
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`TallyCircle server running on http://0.0.0.0:${PORT}`);
-  });
+  return app;
 }
 
-startServer().catch((err) => {
-  console.error('Server startup failed:', err);
-  process.exit(1);
-});
+const isDirectExecution =
+  process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename);
+
+if (isDirectExecution) {
+  createServerApp()
+    .then((app) => {
+      app.listen(PORT, '0.0.0.0', () => {
+        console.log(`TallyCircle server running on http://0.0.0.0:${PORT}`);
+      });
+    })
+    .catch((err) => {
+      console.error('Server startup failed:', err);
+      process.exit(1);
+    });
+}
