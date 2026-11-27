@@ -38,12 +38,85 @@ export function normalizeHandle(raw: string): string {
 }
 
 export function generateToken(prefix = ''): string {
-  const bytes = new Uint8Array(12);
+  const bytes = new Uint8Array(24);
   crypto.getRandomValues(bytes);
-  const hex = Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-  return prefix ? `${prefix}_${hex}` : hex;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  const base64Url = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  return prefix ? `${prefix}_${base64Url}` : base64Url;
+}
+
+export function getPublicAppOrigin(): string {
+  const configured =
+    typeof import.meta !== 'undefined' &&
+    (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_APP_URL
+      ? (import.meta as { env?: Record<string, string | undefined> }).env!.VITE_APP_URL!.trim().replace(/\/+$/, '')
+      : '';
+
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    const host = window.location.hostname;
+    const isLocal = host === 'localhost' || host === '127.0.0.1';
+    if (isLocal && configured && /^https:\/\//i.test(configured)) {
+      return configured;
+    }
+    return window.location.origin.replace(/\/+$/, '');
+  }
+
+  return configured || '';
+}
+
+export function buildGroupInviteUrl(token: string): string {
+  const origin = getPublicAppOrigin();
+  return `${origin}/join/group/${encodeURIComponent(token)}`;
+}
+
+export function buildFriendInviteUrl(token: string): string {
+  const origin = getPublicAppOrigin();
+  return `${origin}/join/friend/${encodeURIComponent(token)}`;
+}
+
+export function buildGroupWhatsAppInviteMessage(groupName: string, inviteUrl: string): string {
+  return [
+    'Hey! Join our group on TallyCircle (Friends Expense Tracker).',
+    '',
+    `Group: ${groupName}`,
+    '',
+    'Click this link to join:',
+    inviteUrl,
+  ].join('\n');
+}
+
+export async function shareInviteLink(params: {
+  title: string;
+  text: string;
+  url: string;
+}): Promise<'shared' | 'copied'> {
+  if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+    try {
+      await navigator.share({
+        title: params.title,
+        text: params.text,
+        url: params.url,
+      });
+      return 'shared';
+    } catch (err) {
+      if ((err as { name?: string })?.name === 'AbortError') {
+        throw err;
+      }
+      // Fall back to clipboard copy if share sheet fails
+    }
+  }
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(params.url);
+    return 'copied';
+  }
+  throw new Error('Sharing and clipboard access are unavailable in this browser.');
+}
+
+export function isValidEmailAddress(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
 }
 
 export function deterministicFriendshipId(uidA: string, uidB: string): string {

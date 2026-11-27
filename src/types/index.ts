@@ -105,6 +105,8 @@ export interface Group {
   endDate?: string;
   memberUids: string[];
   memberNames: Record<string, string>;
+  memberEmails?: Record<string, string>;
+  memberJoinedAt?: Record<string, string>;
   createdBy: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
@@ -115,10 +117,33 @@ export interface GroupInvite {
   groupId: string;
   groupName: string;
   createdBy: string;
+  createdByName?: string;
+  status?: 'active' | 'revoked';
+  revokedBy?: string;
+  revokedAt?: Timestamp;
   expiresAt: Timestamp;
   maxUses: number;
   usesCount: number;
   usedBy: string[];
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export interface GroupEmailInvite {
+  id: string;
+  groupId: string;
+  groupName: string;
+  email: string;
+  emailLower: string;
+  inviteToken: string;
+  inviteUrl: string;
+  existingUserUid?: string;
+  existingUserName?: string;
+  status: 'pending' | 'accepted' | 'cancelled';
+  deliveryStatus: 'sent' | 'provider_unconfigured' | 'failed';
+  deliveryNote?: string;
+  invitedByUid: string;
+  invitedByName: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

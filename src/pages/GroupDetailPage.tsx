@@ -20,6 +20,9 @@ import {
   ArrowLeft,
   Clock,
   ReceiptIndianRupee,
+  RefreshCw,
+  Mail,
+  MessageCircle,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useAuth } from '../contexts/AuthContext';
@@ -29,6 +32,7 @@ import { useToast } from '../contexts/ToastContext';
 import {
   EXPENSE_CATEGORIES,
   Expense,
+  GroupEmailInvite,
   GroupInvite,
   Settlement,
 } from '../types';
@@ -38,21 +42,26 @@ import {
   isSupportedCurrency,
 } from '../utils/finance';
 import {
+  buildGroupInviteUrl,
+  buildGroupWhatsAppInviteMessage,
   buildUpiUri,
   buildWhatsAppShareUrl,
-  formatDateTime,
   formatRelativeTimestamp,
   formatShortDate,
   GROUP_COVER_PRESETS,
   isValidSafeUrl,
+  shareInviteLink,
 } from '../utils/helpers';
 import {
   addMemberToGroup,
+  cancelEmailInvite,
   createGroupInvite,
   deleteGroupWithData,
+  regenerateGroupInvite,
   removeOrLeaveMember,
   revokeGroupInvite,
-  subscribeMyGroupInvites,
+  subscribeGroupEmailInvites,
+  subscribeGroupInvites,
   updateGroupDetails,
 } from '../services/groupService';
 import {
@@ -68,6 +77,7 @@ import { ExpenseFormModal } from '../components/modals/ExpenseFormModal';
 import { ExpenseDetailModal } from '../components/modals/ExpenseDetailModal';
 import { SettlementModal } from '../components/modals/SettlementModal';
 import { ConfirmModal } from '../components/modals/ConfirmModal';
+import { AddMembersModal, AddMembersTab } from '../components/modals/AddMembersModal';
 
 type GroupTab = 'expenses' | 'balances' | 'settlements' | 'timeline' | 'members' | 'activity';
 
@@ -121,11 +131,16 @@ export function GroupDetailPage() {
   const [revokeInviteToken, setRevokeInviteToken] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
 
-  // Invites
-  const [myInvites, setMyInvites] = useState<GroupInvite[]>([]);
+  // Invites & Add Members Modal
+  const [addMembersOpen, setAddMembersOpen] = useState(false);
+  const [addMembersTab, setAddMembersTab] = useState<AddMembersTab>('friends');
+  const [groupInvites, setGroupInvites] = useState<GroupInvite[]>([]);
+  const [emailInvites, setEmailInvites] = useState<GroupEmailInvite[]>([]);
   const [inviteMaxUses, setInviteMaxUses] = useState('15');
   const [inviteExpiryDays, setInviteExpiryDays] = useState('7');
   const [creatingInvite, setCreatingInvite] = useState(false);
+  const [regeneratingToken, setRegeneratingToken] = useState<string | null>(null);
+  const [cancelEmailTarget, setCancelEmailTarget] = useState<GroupEmailInvite | null>(null);
   const [selectedFriendToAdd, setSelectedFriendToAdd] = useState('');
 
   // Settlement Pay / Dispute Dialog
@@ -137,11 +152,26 @@ export function GroupDetailPage() {
 
   useEffect(() => {
     if (!profile?.uid || !group?.id) return;
-    const unsub = subscribeMyGroupInvites(profile.uid, (all) => {
-      setMyInvites(all.filter((inv) => inv.groupId === group.id));
-    });
-    return () => unsub();
-  }, [profile?.uid, group?.id]);
+    const unsubInvites = subscribeGroupInvites(
+      group.id,
+      profile.uid,
+      setGroupInvites,
+      (err) => {
+        showToast('Could not sync group invites', { description: err.message, variant: 'error' });
+      }
+    );
+    const unsubEmailInvites = subscribeGroupEmailInvites(
+      group.id,
+      setEmailInvites,
+      (err) => {
+        showToast('Could not sync email invitations', { description: err.message, variant: 'error' });
+      }
+    );
+    return () => {
+      unsubInvites();
+      unsubEmailInvites();
+    };
+  }, [profile?.uid, group?.id, showToast]);
 
   const { totalExpenditurePaise, memberBalances, simplifiedDebts } = useMemo(() => {
     if (!group) return { totalExpenditurePaise: 0, memberBalances: [], simplifiedDebts: [] };
@@ -318,14 +348,50 @@ export function GroupDetailPage() {
   };
 
   const handleRevokeInvite = async () => {
-    if (!revokeInviteToken) return;
+    if (!revokeInviteToken || !profile) return;
     setActionLoading(true);
     try {
-      await revokeGroupInvite(revokeInviteToken);
+      await revokeGroupInvite(revokeInviteToken, profile, group.id);
       showToast('Invite link revoked', { variant: 'info' });
       setRevokeInviteToken(null);
     } catch (err: unknown) {
       showToast('Could not revoke invite', {
+        description: err instanceof Error ? err.message : 'Try again.',
+        variant: 'error',
+      });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRegenerateInvite = async (oldToken: string) => {
+    if (!profile) return;
+    setRegeneratingToken(oldToken);
+    try {
+      await regenerateGroupInvite(profile, group, oldToken, {
+        maxUses: parseInt(inviteMaxUses, 10) || 15,
+        expiryDays: parseInt(inviteExpiryDays, 10) || 7,
+      });
+      showToast('Old link revoked & new invite generated', { variant: 'success' });
+    } catch (err: unknown) {
+      showToast('Could not regenerate invite', {
+        description: err instanceof Error ? err.message : 'Try again.',
+        variant: 'error',
+      });
+    } finally {
+      setRegeneratingToken(null);
+    }
+  };
+
+  const handleCancelEmailInvite = async () => {
+    if (!profile || !cancelEmailTarget) return;
+    setActionLoading(true);
+    try {
+      await cancelEmailInvite(profile, group, cancelEmailTarget);
+      showToast(`Cancelled email invite for ${cancelEmailTarget.email}`, { variant: 'info' });
+      setCancelEmailTarget(null);
+    } catch (err: unknown) {
+      showToast('Could not cancel email invite', {
         description: err instanceof Error ? err.message : 'Try again.',
         variant: 'error',
       });
@@ -370,9 +436,35 @@ export function GroupDetailPage() {
   };
 
   const copyInviteUrl = async (token: string) => {
-    const url = `${window.location.origin}/join/group/${token}`;
+    const url = buildGroupInviteUrl(token);
     await navigator.clipboard.writeText(url);
     showToast('Invite link copied', { variant: 'success' });
+  };
+
+  const handleShareInvite = async (token: string) => {
+    const url = buildGroupInviteUrl(token);
+    const msg = buildGroupWhatsAppInviteMessage(group.name, url);
+    try {
+      const mode = await shareInviteLink({
+        title: `Join "${group.name}" on TallyCircle`,
+        text: msg,
+        url,
+      });
+      if (mode === 'copied') {
+        showToast('Invite link copied to clipboard', { variant: 'success' });
+      }
+    } catch (err: unknown) {
+      if ((err as { name?: string })?.name === 'AbortError') return;
+      showToast('Could not share link', {
+        description: err instanceof Error ? err.message : 'Try copying the link.',
+        variant: 'error',
+      });
+    }
+  };
+
+  const openAddMembers = (initial: AddMembersTab = 'friends') => {
+    setAddMembersTab(initial);
+    setAddMembersOpen(true);
   };
 
   const handleRemind = async (debtFromUid: string, amountPaise: number) => {
@@ -476,6 +568,10 @@ export function GroupDetailPage() {
           </div>
 
           <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 shrink-0">
+            <Button size="sm" variant="outline" onClick={() => openAddMembers('friends')} className="w-full sm:w-auto">
+              <UserPlus className="w-3.5 h-3.5" />
+              Add Members
+            </Button>
             <Button size="sm" variant="outline" onClick={() => setEditGroupOpen(true)} className="w-full sm:w-auto">
               <Pencil className="w-3.5 h-3.5" />
               Edit
@@ -1064,8 +1160,8 @@ export function GroupDetailPage() {
       {/* TAB 5: MEMBERS & INVITES */}
       {tab === 'members' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Card className="overflow-hidden">
-            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+          <Card className="overflow-hidden h-fit">
+            <div className="px-4 sm:px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
                   Group members ({group.memberUids.length})
@@ -1074,7 +1170,11 @@ export function GroupDetailPage() {
                   Every member has equal permissions. Historical expenses are preserved if someone leaves.
                 </p>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <Button size="sm" onClick={() => openAddMembers('friends')}>
+                  <UserPlus className="w-3.5 h-3.5" />
+                  Add Members
+                </Button>
                 <Button
                   size="sm"
                   variant="outline"
@@ -1090,7 +1190,7 @@ export function GroupDetailPage() {
                   onClick={() => setConfirmDeleteGroupOpen(true)}
                 >
                   <Trash2 className="w-3.5 h-3.5" />
-                  Delete Group
+                  Delete
                 </Button>
               </div>
             </div>
@@ -1102,17 +1202,22 @@ export function GroupDetailPage() {
                   onChange={(e) => setSelectedFriendToAdd(e.target.value)}
                   className="flex-1 min-w-0 h-10 sm:h-9 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm"
                 >
-                  <option value="">Select a friend to add...</option>
+                  <option value="">Quick-add a connected friend...</option>
                   {friendsNotInGroup.map((f) => (
                     <option key={f.uid} value={f.uid}>
                       {f.displayName} (@{f.handle})
                     </option>
                   ))}
                 </select>
-                <Button size="sm" onClick={handleAddFriend} disabled={!selectedFriendToAdd} className="w-full sm:w-auto">
-                  <UserPlus className="w-3.5 h-3.5" />
-                  Add
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" onClick={handleAddFriend} disabled={!selectedFriendToAdd} className="flex-1 sm:flex-initial">
+                    <UserPlus className="w-3.5 h-3.5" />
+                    Add
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => openAddMembers('friends')}>
+                    Multi-Select
+                  </Button>
+                </div>
               </div>
             )}
 
@@ -1120,16 +1225,32 @@ export function GroupDetailPage() {
               {group.memberUids.map((uid) => {
                 const name = group.memberNames[uid] || profilesMap[uid]?.displayName || 'Member';
                 const pub = profilesMap[uid];
+                const memberEmail =
+                  group.memberEmails?.[uid] || (uid === profile?.uid ? profile.email : '');
+                const joinedDateRaw =
+                  group.memberJoinedAt?.[uid] ||
+                  group.createdAt?.toDate?.()?.toISOString?.() ||
+                  '';
+                const joinedDateLabel = joinedDateRaw ? formatShortDate(joinedDateRaw) : 'Active';
+
                 return (
-                  <div key={uid} className="px-5 py-3.5 flex items-center justify-between gap-3">
+                  <div key={uid} className="px-4 sm:px-5 py-3.5 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3 min-w-0">
                       <Avatar name={name} photoUrl={pub?.photoUrl} size="sm" />
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">
-                          {name} {uid === profile?.uid ? '(You)' : ''}
+                      <div className="min-w-0 space-y-0.5">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <p className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">
+                            {name} {uid === profile?.uid ? '(You)' : ''}
+                          </p>
+                          <span className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400 shrink-0">
+                            Active
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                          {memberEmail || (pub?.handle ? `@${pub.handle}` : 'Member')} · Joined {joinedDateLabel}
                         </p>
                         {pub?.upiId && (
-                          <p className="text-xs font-mono-nums text-slate-500 dark:text-slate-400 truncate">
+                          <p className="text-[11px] font-mono-nums text-slate-400 truncate">
                             UPI: {pub.upiId}
                           </p>
                         )}
@@ -1139,7 +1260,7 @@ export function GroupDetailPage() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="text-red-600 dark:text-red-400"
+                        className="text-red-600 dark:text-red-400 shrink-0"
                         onClick={() => setRemoveMemberTarget({ uid, name })}
                       >
                         <UserMinus className="w-3.5 h-3.5" />
@@ -1152,90 +1273,232 @@ export function GroupDetailPage() {
             </div>
           </Card>
 
-          <Card className="p-5 space-y-4 h-fit">
-            <div>
-              <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
-                Shareable group invitation links
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Tokens expire automatically and enforce maximum usage limits.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <InputField
-                label="Expires in (days)"
-                type="number"
-                min="1"
-                max="90"
-                value={inviteExpiryDays}
-                onChange={(e) => setInviteExpiryDays(e.target.value)}
-              />
-              <InputField
-                label="Max uses"
-                type="number"
-                min="1"
-                max="100"
-                value={inviteMaxUses}
-                onChange={(e) => setInviteMaxUses(e.target.value)}
-              />
-            </div>
-
-            <Button onClick={handleGenerateInvite} loading={creatingInvite} className="w-full">
-              Generate Group Invite Link
-            </Button>
-
-            {myInvites.length > 0 && (
-              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
-                {myInvites.map((inv) => {
-                  const url = `${window.location.origin}/join/group/${inv.token}`;
-                  const waUrl = buildWhatsAppShareUrl(
-                    `Join our expense group "${group.name}" on TallyCircle: ${url}`
-                  );
-                  return (
-                    <div
-                      key={inv.token}
-                      className="rounded-lg border border-slate-200 dark:border-slate-800 p-3 space-y-2"
-                    >
-                      <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                        <span>
-                          Used {inv.usesCount}/{inv.maxUses} · Expires{' '}
-                          {inv.expiresAt.toDate().toLocaleDateString('en-IN')}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setRevokeInviteToken(inv.token)}
-                          className="text-red-600 dark:text-red-400 hover:underline cursor-pointer"
-                        >
-                          Revoke
-                        </button>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="flex-1"
-                          onClick={() => copyInviteUrl(inv.token)}
-                        >
-                          <Copy className="w-3.5 h-3.5" />
-                          Copy Link
-                        </Button>
-                        <a
-                          href={waUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
-                        >
-                          <Share2 className="w-3.5 h-3.5" />
-                          WhatsApp
-                        </a>
-                      </div>
-                    </div>
-                  );
-                })}
+          <div className="space-y-6">
+            <Card className="p-5 space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
+                    Shareable group invitation links
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Cryptographically random tokens with expiration and usage limits.
+                  </p>
+                </div>
+                <Button size="sm" variant="outline" onClick={() => openAddMembers('email_whatsapp')}>
+                  <Mail className="w-3.5 h-3.5" />
+                  Email / WA
+                </Button>
               </div>
-            )}
-          </Card>
+
+              <div className="grid grid-cols-2 gap-3">
+                <InputField
+                  label="Expires in (days)"
+                  type="number"
+                  min="1"
+                  max="90"
+                  value={inviteExpiryDays}
+                  onChange={(e) => setInviteExpiryDays(e.target.value)}
+                />
+                <InputField
+                  label="Max uses"
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={inviteMaxUses}
+                  onChange={(e) => setInviteMaxUses(e.target.value)}
+                />
+              </div>
+
+              <Button onClick={handleGenerateInvite} loading={creatingInvite} className="w-full">
+                Generate Group Invite Link
+              </Button>
+
+              {groupInvites.length > 0 && (
+                <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
+                  {groupInvites.map((inv) => {
+                    const isRevoked = inv.status === 'revoked';
+                    const isExpired = (inv.expiresAt?.toDate?.()?.getTime?.() ?? Infinity) < Date.now();
+                    const isExhausted = inv.usesCount >= inv.maxUses;
+                    const isActive = !isRevoked && !isExpired && !isExhausted;
+                    const statusLabel = isRevoked
+                      ? 'Revoked'
+                      : isExpired
+                        ? 'Expired'
+                        : isExhausted
+                          ? 'Limit Reached'
+                          : 'Active';
+                    const statusClass = isRevoked
+                      ? 'text-red-600 dark:text-red-400'
+                      : isExpired
+                        ? 'text-amber-600 dark:text-amber-400'
+                        : isExhausted
+                          ? 'text-slate-500 dark:text-slate-400'
+                          : 'text-emerald-600 dark:text-emerald-400';
+
+                    const url = buildGroupInviteUrl(inv.token);
+                    const waUrl = buildWhatsAppShareUrl(
+                      buildGroupWhatsAppInviteMessage(group.name, url)
+                    );
+
+                    return (
+                      <div
+                        key={inv.token}
+                        className="rounded-lg border border-slate-200 dark:border-slate-800 p-3 space-y-2"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400">
+                          <div>
+                            <span className={`font-semibold ${statusClass}`}>{statusLabel}</span>
+                            {' · '}
+                            <span className="font-mono-nums">
+                              Used {inv.usesCount}/{inv.maxUses}
+                            </span>
+                            {' · '}
+                            <span>
+                              Expires {inv.expiresAt?.toDate?.()?.toLocaleDateString('en-IN') || '—'}
+                            </span>
+                          </div>
+                          {isActive && (
+                            <div className="flex items-center gap-3">
+                              <button
+                                type="button"
+                                disabled={regeneratingToken === inv.token}
+                                onClick={() => handleRegenerateInvite(inv.token)}
+                                className="inline-flex items-center gap-1 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white cursor-pointer disabled:opacity-50"
+                              >
+                                <RefreshCw
+                                  className={`w-3 h-3 ${
+                                    regeneratingToken === inv.token ? 'animate-spin' : ''
+                                  }`}
+                                />
+                                Regenerate
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setRevokeInviteToken(inv.token)}
+                                className="text-red-600 dark:text-red-400 hover:underline cursor-pointer"
+                              >
+                                Revoke
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                        {isActive && (
+                          <div className="grid grid-cols-3 gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => copyInviteUrl(inv.token)}
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                              Copy
+                            </Button>
+                            <a
+                              href={waUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center justify-center gap-1.5 min-h-[40px] sm:min-h-0 sm:h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
+                            >
+                              <MessageCircle className="w-3.5 h-3.5" />
+                              WhatsApp
+                            </a>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleShareInvite(inv.token)}
+                            >
+                              <Share2 className="w-3.5 h-3.5" />
+                              Share
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
+
+            <Card className="overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
+                    Email invitations ({emailInvites.length})
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Pending, accepted, and cancelled invitations sent by email.
+                  </p>
+                </div>
+                <Button size="sm" variant="outline" onClick={() => openAddMembers('email_whatsapp')}>
+                  <Mail className="w-3.5 h-3.5" />
+                  Invite by Email
+                </Button>
+              </div>
+              {emailInvites.length === 0 ? (
+                <p className="p-5 text-xs text-slate-500 dark:text-slate-400 text-center">
+                  No email invitations recorded for this group yet.
+                </p>
+              ) : (
+                <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {emailInvites.map((ei) => (
+                    <div
+                      key={ei.id}
+                      className="px-5 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
+                    >
+                      <div className="min-w-0 space-y-0.5">
+                        <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
+                          {ei.email}
+                          {ei.existingUserName ? ` · ${ei.existingUserName}` : ''}
+                        </p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          <span
+                            className={`font-semibold capitalize ${
+                              ei.status === 'accepted'
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : ei.status === 'cancelled'
+                                  ? 'text-slate-400'
+                                  : 'text-amber-600 dark:text-amber-400'
+                            }`}
+                          >
+                            {ei.status}
+                          </span>
+                          {' · '}
+                          {ei.deliveryStatus === 'sent'
+                            ? 'Email delivered'
+                            : ei.deliveryStatus === 'failed'
+                              ? 'Email failed — use link'
+                              : 'Link saved'}
+                          {ei.invitedByName ? ` · By ${ei.invitedByName}` : ''}
+                        </p>
+                      </div>
+                      {ei.status === 'pending' && (
+                        <div className="flex items-center gap-2 shrink-0">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={async () => {
+                              await navigator.clipboard.writeText(ei.inviteUrl);
+                              showToast('Invitation link copied', { variant: 'success' });
+                            }}
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                            Copy Link
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-red-600 dark:text-red-400"
+                            onClick={() => setCancelEmailTarget(ei)}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          </div>
         </div>
       )}
 
@@ -1462,9 +1725,28 @@ export function GroupDetailPage() {
         onClose={() => setRevokeInviteToken(null)}
         onConfirm={handleRevokeInvite}
         title="Revoke group invite link?"
-        message="Anyone with this link will no longer be able to join the group using it."
+        message="Anyone who opens this link afterwards will see that it has been revoked and cannot join."
         confirmLabel="Revoke Invite"
         loading={actionLoading}
+      />
+
+      <ConfirmModal
+        open={Boolean(cancelEmailTarget)}
+        onClose={() => setCancelEmailTarget(null)}
+        onConfirm={handleCancelEmailInvite}
+        title="Cancel pending email invitation?"
+        message={`Withdraw the pending email invitation for ${cancelEmailTarget?.email}?`}
+        confirmLabel="Cancel Invite"
+        loading={actionLoading}
+      />
+
+      <AddMembersModal
+        open={addMembersOpen}
+        onClose={() => setAddMembersOpen(false)}
+        group={group}
+        invites={groupInvites}
+        emailInvites={emailInvites}
+        initialTab={addMembersTab}
       />
     </div>
   );

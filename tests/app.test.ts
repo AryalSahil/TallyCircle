@@ -13,6 +13,11 @@ import {
   simplifyDebts,
   verifyZeroSumBalance,
 } from '../src/utils/finance.js';
+import {
+  buildGroupWhatsAppInviteMessage,
+  generateToken,
+  isValidEmailAddress,
+} from '../src/utils/helpers.js';
 import { DIRTY_DOZEN_CASES } from '../firestore.rules.test.js';
 import { createServerApp } from '../server.js';
 
@@ -173,26 +178,66 @@ describe('Group Ledger Reconciliation & Debt Simplification', () => {
   });
 });
 
+describe('Invitation Security, Messaging & Email Validation Helpers', () => {
+  it('generates unique 192-bit CSPRNG tokens with prefix and URL-safe characters', () => {
+    const tokens = new Set<string>();
+    for (let i = 0; i < 50; i++) {
+      const tok = generateToken('grp');
+      assert.match(tok, /^grp_[A-Za-z0-9_-]{32}$/);
+      assert.ok(!tok.includes('group'), 'Token must not embed predictable group strings');
+      tokens.add(tok);
+    }
+    assert.equal(tokens.size, 50);
+  });
+
+  it('formats the exact structured WhatsApp group invitation message', () => {
+    const msg = buildGroupWhatsAppInviteMessage(
+      'Goa Beach Trip',
+      'https://tallycircle.example/join/group/grp_abc123'
+    );
+    assert.equal(
+      msg,
+      [
+        'Hey! Join our group on TallyCircle (Friends Expense Tracker).',
+        '',
+        'Group: Goa Beach Trip',
+        '',
+        'Click this link to join:',
+        'https://tallycircle.example/join/group/grp_abc123',
+      ].join('\n')
+    );
+  });
+
+  it('validates recipient email addresses accurately', () => {
+    assert.equal(isValidEmailAddress('priya.sharma@example.com'), true);
+    assert.equal(isValidEmailAddress('not-an-email'), false);
+    assert.equal(isValidEmailAddress('missing@domain'), false);
+  });
+});
+
 describe('Security Rules & Spec Invariants', () => {
-  it('contains all 14 Dirty Dozen + extended adversarial cases', () => {
-    assert.equal(DIRTY_DOZEN_CASES.length, 14);
+  it('contains all 16 Dirty Dozen + extended adversarial cases', () => {
+    assert.equal(DIRTY_DOZEN_CASES.length, 16);
     for (const c of DIRTY_DOZEN_CASES) {
       assert.equal(c.expected, 'PERMISSION_DENIED');
     }
   });
 
-  it('enforces default deny, email verification, terminal settlement locks, and atomic group delete in firestore.rules', () => {
+  it('enforces default deny, email verification, terminal settlement locks, invite revocation, emailInvites, and atomic group delete in firestore.rules', () => {
     const rules = fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf8');
     assert.ok(rules.includes('allow read, write: if false;'));
     assert.ok(rules.includes('request.auth.token.email_verified == true'));
     assert.ok(rules.includes("existing().status != 'confirmed'"));
     assert.ok(rules.includes('!existsAfter(/databases/$(database)/documents/groups/$(groupId))'));
     assert.ok(rules.includes('data.nicknames.keys().hasOnly(data.users)'));
+    assert.ok(rules.includes("incoming().status == 'revoked'"));
+    assert.ok(rules.includes('match /emailInvites/{inviteId}'));
+    assert.ok(rules.includes('match /invites/{token}'));
   });
 });
 
 describe('Backend Express API Endpoints', () => {
-  it('serves /api/health with 200 and rejects unauthenticated protected finance & AI endpoints with 401', async () => {
+  it('serves /api/health with emailConfigured flag and rejects unauthenticated protected endpoints with 401', async () => {
     const app = await createServerApp({ withVite: false });
     const server = app.listen(0, '127.0.0.1');
     await new Promise<void>((resolve, reject) => {
@@ -205,9 +250,31 @@ describe('Backend Express API Endpoints', () => {
 
       const healthRes = await fetch(`${baseUrl}/api/health`);
       assert.equal(healthRes.status, 200);
-      const healthJson = (await healthRes.json()) as { ok: boolean; status: string };
+      const healthJson = (await healthRes.json()) as {
+        ok: boolean;
+        status: string;
+        emailConfigured: boolean;
+      };
       assert.equal(healthJson.ok, true);
       assert.equal(healthJson.status, 'healthy');
+      assert.equal(typeof healthJson.emailConfigured, 'boolean');
+
+      const emailStatusRes = await fetch(`${baseUrl}/api/invitations/email-status`);
+      assert.equal(emailStatusRes.status, 401);
+
+      const validateInviteRes = await fetch(`${baseUrl}/api/invitations/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: 'grp_test' }),
+      });
+      assert.equal(validateInviteRes.status, 401);
+
+      const sendEmailRes = await fetch(`${baseUrl}/api/invitations/send-email`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ groupName: 'Trip', inviteUrl: 'https://example.com', recipients: [] }),
+      });
+      assert.equal(sendEmailRes.status, 401);
 
       const splitsRes = await fetch(`${baseUrl}/api/finance/compute-splits`, {
         method: 'POST',

@@ -25,7 +25,11 @@ import {
   subscribeMyFriendInvites,
   updateFriendDetails,
 } from '../services/friendService';
-import { buildWhatsAppShareUrl } from '../utils/helpers';
+import {
+  buildFriendInviteUrl,
+  buildWhatsAppShareUrl,
+  shareInviteLink,
+} from '../utils/helpers';
 import { Avatar, Button, Card, EmptyState, InputField, Modal } from '../components/ui/Primitives';
 import { ConfirmModal } from '../components/modals/ConfirmModal';
 
@@ -147,9 +151,29 @@ export function FriendsPage() {
   };
 
   const copyLink = async (token: string) => {
-    const url = `${window.location.origin}/join/friend/${token}`;
+    const url = buildFriendInviteUrl(token);
     await navigator.clipboard.writeText(url);
     showToast('Friend invite link copied', { variant: 'success' });
+  };
+
+  const handleNativeShareFriend = async (token: string) => {
+    const url = buildFriendInviteUrl(token);
+    try {
+      const mode = await shareInviteLink({
+        title: 'Connect on TallyCircle',
+        text: `Connect with me on TallyCircle to split expenses easily: ${url}`,
+        url,
+      });
+      if (mode === 'copied') {
+        showToast('Friend invite link copied', { variant: 'success' });
+      }
+    } catch (err: unknown) {
+      if ((err as { name?: string })?.name === 'AbortError') return;
+      showToast('Could not share link', {
+        description: err instanceof Error ? err.message : 'Try copying the link.',
+        variant: 'error',
+      });
+    }
   };
 
   return (
@@ -240,7 +264,7 @@ export function FriendsPage() {
             {myInvites.length > 0 && (
               <div className="space-y-2.5 pt-2">
                 {myInvites.map((inv) => {
-                  const url = `${window.location.origin}/join/friend/${inv.token}`;
+                  const url = buildFriendInviteUrl(inv.token);
                   const waUrl = buildWhatsAppShareUrl(
                     `Connect with me on TallyCircle to split expenses easily: ${url}`
                   );
@@ -262,15 +286,14 @@ export function FriendsPage() {
                           Revoke
                         </button>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="grid grid-cols-3 gap-2">
                         <Button
                           size="sm"
                           variant="outline"
-                          className="flex-1"
                           onClick={() => copyLink(inv.token)}
                         >
                           <Copy className="w-3.5 h-3.5" />
-                          Copy Link
+                          Copy
                         </Button>
                         <a
                           href={waUrl}
@@ -281,6 +304,14 @@ export function FriendsPage() {
                           <Share2 className="w-3.5 h-3.5" />
                           WhatsApp
                         </a>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleNativeShareFriend(inv.token)}
+                        >
+                          <Share2 className="w-3.5 h-3.5" />
+                          Share
+                        </Button>
                       </div>
                     </div>
                   );

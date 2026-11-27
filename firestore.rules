@@ -113,7 +113,7 @@ service cloud.firestore {
 
     function isValidGroup(data) {
       return data.keys().hasAll(['name', 'description', 'currency', 'isArchived', 'memberUids', 'memberNames', 'createdBy', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['name', 'description', 'coverImage', 'currency', 'isArchived', 'startDate', 'endDate', 'memberUids', 'memberNames', 'lastJoinToken', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['name', 'description', 'coverImage', 'currency', 'isArchived', 'startDate', 'endDate', 'memberUids', 'memberNames', 'memberEmails', 'memberJoinedAt', 'lastJoinToken', 'createdBy', 'createdAt', 'updatedAt'])
         && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
         && data.description is string && data.description.size() <= 500
         && (!('coverImage' in data) || (data.coverImage is string && data.coverImage.size() <= 350000))
@@ -125,6 +125,8 @@ service cloud.firestore {
         && data.memberUids is list && data.memberUids.size() >= 1 && data.memberUids.size() <= 50
         && data.memberUids[0] is string
         && data.memberNames is map && data.memberNames.size() <= 100
+        && (!('memberEmails' in data) || (data.memberEmails is map && data.memberEmails.size() <= 100))
+        && (!('memberJoinedAt' in data) || (data.memberJoinedAt is map && data.memberJoinedAt.size() <= 100))
         && data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
@@ -132,16 +134,40 @@ service cloud.firestore {
 
     function isValidGroupInvite(data) {
       return data.keys().hasAll(['token', 'groupId', 'groupName', 'createdBy', 'expiresAt', 'maxUses', 'usesCount', 'usedBy', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['token', 'groupId', 'groupName', 'createdBy', 'expiresAt', 'maxUses', 'usesCount', 'usedBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['token', 'groupId', 'groupName', 'createdBy', 'createdByName', 'status', 'revokedBy', 'revokedAt', 'expiresAt', 'maxUses', 'usesCount', 'usedBy', 'createdAt', 'updatedAt'])
         && isValidId(data.token)
         && isValidId(data.groupId)
         && data.groupName is string && data.groupName.size() >= 1 && data.groupName.size() <= 80
         && data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128
+        && (!('createdByName' in data) || (data.createdByName is string && data.createdByName.size() <= 80))
+        && (!('status' in data) || data.status in ['active', 'revoked'])
+        && (!('revokedBy' in data) || (data.revokedBy is string && data.revokedBy.size() <= 128))
+        && (!('revokedAt' in data) || data.revokedAt is timestamp)
         && data.expiresAt is timestamp
         && data.maxUses is int && data.maxUses >= 1 && data.maxUses <= 100
         && data.usesCount is int && data.usesCount >= 0 && data.usesCount <= data.maxUses
         && data.usedBy is list && data.usedBy.size() <= 100
         && (data.usedBy.size() == 0 || data.usedBy[0] is string)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidEmailInvite(data, groupId) {
+      return data.keys().hasAll(['groupId', 'groupName', 'email', 'emailLower', 'inviteToken', 'inviteUrl', 'status', 'deliveryStatus', 'invitedByUid', 'invitedByName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['groupId', 'groupName', 'email', 'emailLower', 'inviteToken', 'inviteUrl', 'existingUserUid', 'existingUserName', 'status', 'deliveryStatus', 'deliveryNote', 'invitedByUid', 'invitedByName', 'createdAt', 'updatedAt'])
+        && data.groupId == groupId
+        && data.groupName is string && data.groupName.size() >= 1 && data.groupName.size() <= 80
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 120
+        && data.emailLower is string && data.emailLower.size() >= 3 && data.emailLower.size() <= 120
+        && isValidId(data.inviteToken)
+        && data.inviteUrl is string && data.inviteUrl.size() >= 1 && data.inviteUrl.size() <= 300
+        && (!('existingUserUid' in data) || (data.existingUserUid is string && data.existingUserUid.size() <= 128))
+        && (!('existingUserName' in data) || (data.existingUserName is string && data.existingUserName.size() <= 80))
+        && data.status in ['pending', 'accepted', 'cancelled']
+        && data.deliveryStatus in ['sent', 'provider_unconfigured', 'failed']
+        && (!('deliveryNote' in data) || (data.deliveryNote is string && data.deliveryNote.size() <= 240))
+        && data.invitedByUid is string && data.invitedByUid.size() >= 1 && data.invitedByUid.size() <= 128
+        && data.invitedByName is string && data.invitedByName.size() >= 1 && data.invitedByName.size() <= 80
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -374,7 +400,7 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && (
           (request.auth.uid in existing().memberUids
-            && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'coverImage', 'isArchived', 'startDate', 'endDate', 'memberUids', 'memberNames', 'updatedAt']))
+            && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'coverImage', 'isArchived', 'startDate', 'endDate', 'memberUids', 'memberNames', 'memberEmails', 'memberJoinedAt', 'updatedAt']))
           ||
           (!(request.auth.uid in existing().memberUids)
             && request.auth.uid in incoming().memberUids
@@ -384,8 +410,9 @@ service cloud.firestore {
             && isValidId(incoming().lastJoinToken)
             && exists(/databases/$(database)/documents/groupInvites/$(incoming().lastJoinToken))
             && get(/databases/$(database)/documents/groupInvites/$(incoming().lastJoinToken)).data.groupId == groupId
+            && (!('status' in get(/databases/$(database)/documents/groupInvites/$(incoming().lastJoinToken)).data) || get(/databases/$(database)/documents/groupInvites/$(incoming().lastJoinToken)).data.status == 'active')
             && getAfter(/databases/$(database)/documents/groupInvites/$(incoming().lastJoinToken)).data.usesCount == get(/databases/$(database)/documents/groupInvites/$(incoming().lastJoinToken)).data.usesCount + 1
-            && incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'memberNames', 'lastJoinToken', 'updatedAt']))
+            && incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'memberNames', 'memberEmails', 'memberJoinedAt', 'lastJoinToken', 'updatedAt']))
         );
       allow delete: if isValidId(groupId) && isVerifiedUser() && request.auth.uid in existing().memberUids;
 
@@ -503,6 +530,70 @@ service cloud.firestore {
         allow delete: if isValidId(groupId) && isValidId(activityId) && isGroupMember(groupId)
           && !existsAfter(/databases/$(database)/documents/groups/$(groupId));
       }
+      match /invites/{token} {
+        allow get: if isValidId(groupId) && isValidId(token) && isGroupMember(groupId);
+        allow list: if isValidId(groupId) && isGroupMember(groupId);
+        allow create: if isValidId(groupId) && isValidId(token) && isVerifiedUser()
+          && isValidGroupInvite(incoming())
+          && incoming().token == token
+          && incoming().groupId == groupId
+          && incoming().createdBy == request.auth.uid
+          && (!('status' in incoming()) || incoming().status == 'active')
+          && incoming().usesCount == 0
+          && incoming().usedBy.size() == 0
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isGroupMember(groupId);
+        allow update: if isValidId(groupId) && isValidId(token) && isVerifiedUser()
+          && isValidGroupInvite(incoming())
+          && isGroupMember(groupId)
+          && incoming().token == existing().token
+          && incoming().groupId == existing().groupId
+          && incoming().createdBy == existing().createdBy
+          && incoming().expiresAt == existing().expiresAt
+          && incoming().maxUses == existing().maxUses
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (!('status' in existing()) || existing().status == 'active')
+          && incoming().status == 'revoked'
+          && incoming().revokedBy == request.auth.uid
+          && incoming().revokedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'revokedBy', 'revokedAt', 'updatedAt']);
+        allow delete: if isValidId(groupId) && isValidId(token) && isGroupMember(groupId)
+          && !existsAfter(/databases/$(database)/documents/groups/$(groupId));
+      }
+
+      match /emailInvites/{inviteId} {
+        allow get: if isValidId(groupId) && isValidId(inviteId) && isGroupMember(groupId);
+        allow list: if isValidId(groupId) && isGroupMember(groupId);
+        allow create: if isValidId(groupId) && isValidId(inviteId) && isVerifiedUser()
+          && isValidEmailInvite(incoming(), groupId)
+          && incoming().invitedByUid == request.auth.uid
+          && incoming().status == 'pending'
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isGroupMember(groupId);
+        allow update: if isValidId(groupId) && isValidId(inviteId) && isVerifiedUser()
+          && isValidEmailInvite(incoming(), groupId)
+          && incoming().groupId == existing().groupId
+          && incoming().email == existing().email
+          && incoming().emailLower == existing().emailLower
+          && incoming().inviteToken == existing().inviteToken
+          && incoming().invitedByUid == existing().invitedByUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && existing().status == 'pending'
+          && (
+            (isGroupMember(groupId) && incoming().status in ['accepted', 'cancelled'])
+            || ('email' in request.auth.token
+              && request.auth.token.email != null
+              && existing().emailLower == request.auth.token.email.lower()
+              && incoming().status == 'accepted')
+          )
+          && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
+        allow delete: if isValidId(groupId) && isValidId(inviteId) && isGroupMember(groupId)
+          && !existsAfter(/databases/$(database)/documents/groups/$(groupId));
+      }
     }
 
     match /groupInvites/{token} {
@@ -512,6 +603,7 @@ service cloud.firestore {
         && isValidGroupInvite(incoming())
         && incoming().token == token
         && incoming().createdBy == request.auth.uid
+        && (!('status' in incoming()) || incoming().status == 'active')
         && incoming().usesCount == 0
         && incoming().usedBy.size() == 0
         && incoming().createdAt == request.time
@@ -527,13 +619,26 @@ service cloud.firestore {
         && incoming().maxUses == existing().maxUses
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
-        && existing().usesCount < existing().maxUses
-        && request.time < existing().expiresAt
-        && incoming().usesCount == existing().usesCount + 1
-        && !(request.auth.uid in existing().usedBy)
-        && request.auth.uid in incoming().usedBy
-        && incoming().usedBy.size() == existing().usedBy.size() + 1
-        && incoming().diff(existing()).affectedKeys().hasOnly(['usesCount', 'usedBy', 'updatedAt']);
+        && (
+          ((!('status' in existing()) || existing().status == 'active')
+            && (!('status' in incoming()) || incoming().status == 'active')
+            && existing().usesCount < existing().maxUses
+            && request.time < existing().expiresAt
+            && incoming().usesCount == existing().usesCount + 1
+            && !(request.auth.uid in existing().usedBy)
+            && request.auth.uid in incoming().usedBy
+            && incoming().usedBy.size() == existing().usedBy.size() + 1
+            && incoming().diff(existing()).affectedKeys().hasOnly(['usesCount', 'usedBy', 'updatedAt']))
+          ||
+          ((isGroupMember(existing().groupId) || existing().createdBy == request.auth.uid)
+            && (!('status' in existing()) || existing().status == 'active')
+            && incoming().status == 'revoked'
+            && incoming().revokedBy == request.auth.uid
+            && incoming().revokedAt == request.time
+            && incoming().usesCount == existing().usesCount
+            && incoming().usedBy == existing().usedBy
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'revokedBy', 'revokedAt', 'updatedAt']))
+        );
       allow delete: if isValidId(token) && isVerifiedUser()
         && (isGroupMember(existing().groupId) || existing().createdBy == request.auth.uid);
     }

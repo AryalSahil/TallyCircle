@@ -2,7 +2,6 @@ import {
   collection,
   doc,
   onSnapshot,
-  orderBy,
   query,
   serverTimestamp,
   setDoc,
@@ -23,17 +22,18 @@ export function subscribeNotifications(
 ): Unsubscribe {
   const q = query(
     collection(db, 'notifications'),
-    where('recipientUid', '==', uid),
-    orderBy('createdAt', 'desc')
+    where('recipientUid', '==', uid)
   );
 
   return onSnapshot(
     q,
     (snapshot) => {
-      const items = snapshot.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Omit<AppNotification, 'id'>),
-      }));
+      const items = snapshot.docs
+        .map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<AppNotification, 'id'>),
+        }))
+        .sort((a, b) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0));
       callback(items);
     },
     (error) => {

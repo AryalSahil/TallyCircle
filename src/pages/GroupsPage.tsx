@@ -28,8 +28,14 @@ export function GroupsPage() {
 
   const extractToken = (raw: string): string => {
     const trimmed = raw.trim();
-    const match = trimmed.match(/\/join\/group\/([a-zA-Z0-9_\-]+)/);
-    if (match?.[1]) return match[1];
+    const match = trimmed.match(/\/join\/group\/([a-zA-Z0-9_%.\-]+)/);
+    if (match?.[1]) {
+      try {
+        return decodeURIComponent(match[1]);
+      } catch {
+        return match[1];
+      }
+    }
     return trimmed;
   };
 

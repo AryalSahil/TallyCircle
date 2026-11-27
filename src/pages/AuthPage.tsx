@@ -8,6 +8,7 @@ import {
   AlertCircle,
   Copy,
   Check,
+  UserPlus,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -138,6 +139,21 @@ export function AuthPage() {
   const currentHost =
     typeof window !== 'undefined' ? window.location.hostname : '';
 
+  const pendingInviteKind = (() => {
+    if (typeof window === 'undefined') return null;
+    const currentPath = window.location.pathname;
+    let storedPath = '';
+    try {
+      storedPath = sessionStorage.getItem('tallycircle_pending_invite_path') || '';
+    } catch {
+      storedPath = '';
+    }
+    const effectivePath = currentPath.startsWith('/join/') ? currentPath : storedPath;
+    if (effectivePath.startsWith('/join/group/')) return 'group' as const;
+    if (effectivePath.startsWith('/join/friend/')) return 'friend' as const;
+    return null;
+  })();
+
   useEffect(() => {
     if (!redirectAuthError) return;
     const parsed = parseAuthError(redirectAuthError, currentHost);
@@ -227,6 +243,11 @@ export function AuthPage() {
               </span>
               . Click the link in your inbox, then press continue below.
             </p>
+            {pendingInviteKind && (
+              <p className="mt-3 rounded-lg border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/70 dark:bg-emerald-950/30 px-3 py-2 text-xs text-emerald-800 dark:text-emerald-200">
+                After verifying your email, you will be redirected directly back to accept your {pendingInviteKind} invitation.
+              </p>
+            )}
           </div>
           <div className="space-y-2.5 pt-1">
             <Button
@@ -302,6 +323,15 @@ export function AuthPage() {
               Split group bills with paise precision, simplify debts, and track UPI or cash settlements.
             </p>
           </div>
+
+          {pendingInviteKind && (
+            <div className="rounded-xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/80 dark:bg-emerald-950/30 p-3.5 flex items-start gap-2.5">
+              <UserPlus className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+              <p className="text-xs text-emerald-900 dark:text-emerald-200 leading-relaxed">
+                You have a pending {pendingInviteKind === 'group' ? 'group' : 'friend'} invitation. Sign in or create an account and we&apos;ll take you right back to join.
+              </p>
+            </div>
+          )}
 
           {authAlert && (
             <div

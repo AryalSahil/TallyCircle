@@ -110,4 +110,20 @@ export const DIRTY_DOZEN_CASES = [
     payload: { amountPaise: 5000, status: 'confirmed' },
     expected: 'PERMISSION_DENIED',
   },
+  {
+    name: '15. Non-member attempts to join group using revoked invite token',
+    path: '/groupInvites/revoked_tok',
+    operation: 'update',
+    auth: { uid: 'userC', token: { email_verified: true } },
+    payload: { usesCount: 1, usedBy: ['userC'] },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '16. Non-member attempts to create email invite in group subcollection',
+    path: '/groups/g1/emailInvites/e1',
+    operation: 'create',
+    auth: { uid: 'userC', token: { email_verified: true } },
+    payload: { groupId: 'g1', email: 'victim@example.com', status: 'pending' },
+    expected: 'PERMISSION_DENIED',
+  },
 ];

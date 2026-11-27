@@ -32,6 +32,7 @@ const ai = process.env.GEMINI_API_KEY
 
 interface AuthedRequest extends Request {
   uid?: string;
+  email?: string;
 }
 
 async function verifyFirebaseAuth(req: AuthedRequest, res: Response, next: NextFunction) {
@@ -61,7 +62,7 @@ async function verifyFirebaseAuth(req: AuthedRequest, res: Response, next: NextF
     }
 
     const data = (await verifyRes.json()) as {
-      users?: Array<{ localId?: string; emailVerified?: boolean }>;
+      users?: Array<{ localId?: string; email?: string; emailVerified?: boolean }>;
     };
     const user = data.users?.[0];
     if (!user?.localId) {
@@ -70,11 +71,43 @@ async function verifyFirebaseAuth(req: AuthedRequest, res: Response, next: NextF
     }
 
     req.uid = user.localId;
+    req.email = user.email || '';
     next();
   } catch (err) {
     console.error('Auth verification error:', err);
     res.status(500).json({ error: 'Failed to verify session' });
   }
+}
+
+interface FirestoreFieldValue {
+  stringValue?: string;
+  integerValue?: string;
+  timestampValue?: string;
+  booleanValue?: boolean;
+  arrayValue?: { values?: FirestoreFieldValue[] };
+}
+
+function readFsString(fields: Record<string, FirestoreFieldValue> | undefined, key: string): string {
+  return fields?.[key]?.stringValue ?? '';
+}
+
+function readFsInt(fields: Record<string, FirestoreFieldValue> | undefined, key: string): number {
+  const raw = fields?.[key]?.integerValue;
+  return raw !== undefined ? Number(raw) : 0;
+}
+
+function readFsBool(fields: Record<string, FirestoreFieldValue> | undefined, key: string): boolean {
+  return Boolean(fields?.[key]?.booleanValue);
+}
+
+function readFsTimestamp(fields: Record<string, FirestoreFieldValue> | undefined, key: string): string {
+  return fields?.[key]?.timestampValue ?? '';
+}
+
+function readFsStringArray(fields: Record<string, FirestoreFieldValue> | undefined, key: string): string[] {
+  const values = fields?.[key]?.arrayValue?.values;
+  if (!Array.isArray(values)) return [];
+  return values.map((v) => v.stringValue ?? '').filter(Boolean);
 }
 
 const VALID_CATEGORIES = [
@@ -97,6 +130,8 @@ export async function createServerApp(options: { withVite?: boolean } = {}) {
   const app = express();
   app.use(express.json({ limit: '4mb' }));
 
+  const emailProviderConfigured = Boolean(process.env.RESEND_API_KEY?.trim());
+
   // Operational health check for uptime monitors and deployment readiness probes
   app.get('/api/health', (_req: Request, res: Response) => {
     res.json({
@@ -105,8 +140,287 @@ export async function createServerApp(options: { withVite?: boolean } = {}) {
       service: 'tallycircle',
       databaseId: firebaseConfig.firestoreDatabaseId,
       aiConfigured: Boolean(ai),
+      emailConfigured: emailProviderConfigured,
       uptimeSec: Math.round(process.uptime()),
       timestamp: new Date().toISOString(),
+    });
+  });
+
+  // Truthful email provider capability check
+  app.get('/api/invitations/email-status', verifyFirebaseAuth, (_req: AuthedRequest, res: Response) => {
+    res.json({
+      configured: emailProviderConfigured,
+      provider: emailProviderConfigured ? 'resend' : null,
+      fromAddress: emailProviderConfigured
+        ? (process.env.EMAIL_FROM?.trim() || 'TallyCircle <onboarding@resend.dev>')
+        : null,
+    });
+  });
+
+  // Server-side invitation validation against Firestore REST using caller's verified Bearer token
+  app.post('/api/invitations/validate', verifyFirebaseAuth, async (req: AuthedRequest, res: Response) => {
+    const { token } = req.body as { token?: unknown };
+    if (typeof token !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(token)) {
+      res.json({
+        valid: false,
+        reason: 'invalid',
+        message: 'This invitation token is malformed or invalid.',
+      });
+      return;
+    }
+
+    const idToken = req.headers.authorization!.slice('Bearer '.length).trim();
+    const baseFsUrl = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(firebaseConfig.projectId)}/databases/${encodeURIComponent(firebaseConfig.firestoreDatabaseId)}/documents`;
+
+    try {
+      const invRes = await fetch(`${baseFsUrl}/groupInvites/${encodeURIComponent(token)}`, {
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+
+      if (invRes.status === 404) {
+        res.json({
+          valid: false,
+          reason: 'invalid',
+          message: 'This group invitation link does not exist or has been removed.',
+        });
+        return;
+      }
+
+      if (!invRes.ok) {
+        res.status(502).json({ error: 'Unable to validate invitation with Firestore.' });
+        return;
+      }
+
+      const invDoc = (await invRes.json()) as { fields?: Record<string, FirestoreFieldValue> };
+      const fields = invDoc.fields;
+      const groupId = readFsString(fields, 'groupId');
+      const groupName = readFsString(fields, 'groupName');
+      const createdByName = readFsString(fields, 'createdByName');
+      const status = readFsString(fields, 'status') || 'active';
+      const expiresAtIso = readFsTimestamp(fields, 'expiresAt');
+      const maxUses = readFsInt(fields, 'maxUses');
+      const usesCount = readFsInt(fields, 'usesCount');
+      const usedBy = readFsStringArray(fields, 'usedBy');
+
+      const inviteMeta = {
+        token,
+        groupId,
+        groupName,
+        createdByName,
+        expiresAtIso,
+        maxUses,
+        usesCount,
+        status,
+      };
+
+      if (status === 'revoked') {
+        res.json({
+          valid: false,
+          reason: 'revoked',
+          message: 'This group invitation link was revoked by a group member.',
+          invite: inviteMeta,
+        });
+        return;
+      }
+
+      if (expiresAtIso && new Date(expiresAtIso).getTime() < Date.now()) {
+        res.json({
+          valid: false,
+          reason: 'expired',
+          message: 'This group invitation link has expired.',
+          invite: inviteMeta,
+        });
+        return;
+      }
+
+      // Check if caller is already an active member of the group (readable iff already in memberUids)
+      const grpRes = await fetch(`${baseFsUrl}/groups/${encodeURIComponent(groupId)}`, {
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+      if (grpRes.ok) {
+        const grpDoc = (await grpRes.json()) as { fields?: Record<string, FirestoreFieldValue> };
+        const gFields = grpDoc.fields;
+        const memberUids = readFsStringArray(gFields, 'memberUids');
+        if (req.uid && memberUids.includes(req.uid)) {
+          res.json({
+            valid: true,
+            reason: 'already_member',
+            message: 'You are already a member of this group.',
+            invite: inviteMeta,
+            group: {
+              id: groupId,
+              name: readFsString(gFields, 'name') || groupName,
+              description: readFsString(gFields, 'description'),
+              memberCount: memberUids.length,
+              isArchived: readFsBool(gFields, 'isArchived'),
+            },
+          });
+          return;
+        }
+      } else if (grpRes.status === 404) {
+        res.json({
+          valid: false,
+          reason: 'group_deleted',
+          message: 'This group has been deleted and is no longer available.',
+          invite: inviteMeta,
+        });
+        return;
+      }
+
+      if (usesCount >= maxUses) {
+        res.json({
+          valid: false,
+          reason: 'limit_reached',
+          message: 'This group invitation link has reached its maximum usage limit.',
+          invite: inviteMeta,
+        });
+        return;
+      }
+
+      if (req.uid && usedBy.includes(req.uid)) {
+        res.json({
+          valid: false,
+          reason: 'already_used',
+          message: 'You already redeemed this invitation link previously. Ask a group member for a fresh link.',
+          invite: inviteMeta,
+        });
+        return;
+      }
+
+      res.json({
+        valid: true,
+        invite: inviteMeta,
+      });
+    } catch (err) {
+      console.error('Invite validation error:', err);
+      res.status(502).json({ error: 'Network error while validating invitation.' });
+    }
+  });
+
+  // Real transactional email sender (Resend API when configured; never pretends if unconfigured)
+  app.post('/api/invitations/send-email', verifyFirebaseAuth, async (req: AuthedRequest, res: Response) => {
+    const { groupName, inviteUrl, inviterName, recipients } = req.body as {
+      groupId?: string;
+      groupName?: string;
+      inviteUrl?: string;
+      inviterName?: string;
+      recipients?: Array<{ email: string; existingAccountName?: string }>;
+    };
+
+    if (!groupName || !inviteUrl || !Array.isArray(recipients) || recipients.length === 0) {
+      res.status(400).json({ error: 'groupName, inviteUrl, and recipients are required.' });
+      return;
+    }
+
+    let safeInviteUrl = '';
+    try {
+      const parsed = new URL(inviteUrl);
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+        throw new Error('Invalid scheme');
+      }
+      safeInviteUrl = parsed.toString();
+    } catch {
+      res.status(400).json({ error: 'Invalid invitation URL.' });
+      return;
+    }
+
+    const validRecipients = recipients
+      .filter((r) => r && typeof r.email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(r.email.trim()))
+      .slice(0, 20);
+
+    if (validRecipients.length === 0) {
+      res.status(400).json({ error: 'Provide at least one valid email address.' });
+      return;
+    }
+
+    const resendKey = process.env.RESEND_API_KEY?.trim();
+    if (!resendKey) {
+      res.json({
+        delivered: false,
+        emailConfigured: false,
+        provider: null,
+        message:
+          'Email provider is not configured on the server (set RESEND_API_KEY in Settings > Secrets). Pending invite records and shareable links were created.',
+        results: validRecipients.map((r) => ({
+          email: r.email.trim(),
+          status: 'provider_unconfigured',
+          note: 'Email provider not configured; share the invite link directly or via WhatsApp.',
+        })),
+      });
+      return;
+    }
+
+    const fromAddress = process.env.EMAIL_FROM?.trim() || 'TallyCircle <onboarding@resend.dev>';
+    const senderLabel = (inviterName || 'A friend').slice(0, 80);
+    const safeGroup = groupName.slice(0, 80);
+
+    const results = await Promise.all(
+      validRecipients.map(async (r) => {
+        const toEmail = r.email.trim();
+        try {
+          const emailRes = await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${resendKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              from: fromAddress,
+              to: [toEmail],
+              subject: `${senderLabel} invited you to join "${safeGroup}" on TallyCircle`,
+              text: [
+                `Hey! ${senderLabel} invited you to join the expense group "${safeGroup}" on TallyCircle.`,
+                '',
+                `Click this link to join:`,
+                safeInviteUrl,
+              ].join('\n'),
+              html: `<div style="font-family:Inter,system-ui,sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#0f172a;">
+                <h2 style="margin:0 0 12px;">Join "${safeGroup.replace(/[<>&"]/g, '')}" on TallyCircle</h2>
+                <p style="margin:0 0 20px;color:#475569;line-height:1.5;">
+                  <strong>${senderLabel.replace(/[<>&"]/g, '')}</strong> invited you to collaborate and split shared expenses in <strong>${safeGroup.replace(/[<>&"]/g, '')}</strong>.
+                </p>
+                <a href="${safeInviteUrl}" style="display:inline-block;background:#059669;color:#ffffff;text-decoration:none;font-weight:600;padding:12px 20px;border-radius:8px;">
+                  Accept &amp; Join Group
+                </a>
+                <p style="margin:20px 0 0;font-size:12px;color:#64748b;word-break:break-all;">
+                  Or copy this invitation link:<br/>${safeInviteUrl}
+                </p>
+              </div>`,
+            }),
+          });
+
+          if (!emailRes.ok) {
+            const errBody = await emailRes.text();
+            return {
+              email: toEmail,
+              status: 'failed' as const,
+              note: errBody.slice(0, 180) || `Provider returned ${emailRes.status}`,
+            };
+          }
+          return {
+            email: toEmail,
+            status: 'sent' as const,
+            note: 'Invitation email delivered.',
+          };
+        } catch (err) {
+          return {
+            email: toEmail,
+            status: 'failed' as const,
+            note: err instanceof Error ? err.message : 'Network error sending email',
+          };
+        }
+      })
+    );
+
+    const anySent = results.some((r) => r.status === 'sent');
+    res.json({
+      delivered: anySent,
+      emailConfigured: true,
+      provider: 'resend',
+      message: anySent
+        ? 'Invitation email(s) sent.'
+        : 'Email provider attempted delivery but rejected the request.',
+      results,
     });
   });
 

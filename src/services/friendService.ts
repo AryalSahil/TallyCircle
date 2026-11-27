@@ -4,7 +4,6 @@ import {
   doc,
   getDoc,
   onSnapshot,
-  orderBy,
   query,
   runTransaction,
   serverTimestamp,
@@ -206,13 +205,15 @@ export function subscribeMyFriendInvites(
 ): Unsubscribe {
   const q = query(
     collection(db, 'friendInvites'),
-    where('creatorUid', '==', uid),
-    orderBy('createdAt', 'desc')
+    where('creatorUid', '==', uid)
   );
   return onSnapshot(
     q,
     (snap) => {
-      callback(snap.docs.map((d) => d.data() as FriendInvite));
+      const items = snap.docs
+        .map((d) => d.data() as FriendInvite)
+        .sort((a, b) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0));
+      callback(items);
     },
     (error) => {
       const info = logFirestoreError(error, OperationType.LIST, 'friendInvites');

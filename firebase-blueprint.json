@@ -96,6 +96,8 @@
         "endDate": { "type": "string", "maxLength": 20 },
         "memberUids": { "type": "array" },
         "memberNames": { "type": "object" },
+        "memberEmails": { "type": "object" },
+        "memberJoinedAt": { "type": "object" },
         "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
@@ -104,13 +106,17 @@
     },
     "GroupInvite": {
       "title": "GroupInvite",
-      "description": "Shareable group invitation token with expiration and usage caps.",
+      "description": "Shareable group invitation token with expiration, revocation state, and usage caps.",
       "type": "object",
       "properties": {
         "token": { "type": "string", "minLength": 6, "maxLength": 128 },
         "groupId": { "type": "string", "minLength": 1, "maxLength": 128 },
         "groupName": { "type": "string", "minLength": 1, "maxLength": 80 },
         "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdByName": { "type": "string", "maxLength": 80 },
+        "status": { "type": "string", "enum": ["active", "revoked"] },
+        "revokedBy": { "type": "string", "maxLength": 128 },
+        "revokedAt": { "type": "string", "format": "date-time" },
         "expiresAt": { "type": "string", "format": "date-time" },
         "maxUses": { "type": "integer" },
         "usesCount": { "type": "integer" },
@@ -119,6 +125,29 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["token", "groupId", "groupName", "createdBy", "expiresAt", "maxUses", "usesCount", "usedBy", "createdAt", "updatedAt"]
+    },
+    "GroupEmailInvite": {
+      "title": "GroupEmailInvite",
+      "description": "Tracked group invitation issued to a recipient email address.",
+      "type": "object",
+      "properties": {
+        "groupId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "groupName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "email": { "type": "string", "minLength": 3, "maxLength": 120 },
+        "emailLower": { "type": "string", "minLength": 3, "maxLength": 120 },
+        "inviteToken": { "type": "string", "minLength": 6, "maxLength": 128 },
+        "inviteUrl": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "existingUserUid": { "type": "string", "maxLength": 128 },
+        "existingUserName": { "type": "string", "maxLength": 80 },
+        "status": { "type": "string", "enum": ["pending", "accepted", "cancelled"] },
+        "deliveryStatus": { "type": "string", "enum": ["sent", "provider_unconfigured", "failed"] },
+        "deliveryNote": { "type": "string", "maxLength": 240 },
+        "invitedByUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "invitedByName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["groupId", "groupName", "email", "emailLower", "inviteToken", "inviteUrl", "status", "deliveryStatus", "invitedByUid", "invitedByName", "createdAt", "updatedAt"]
     },
     "Expense": {
       "title": "Expense",
@@ -268,6 +297,14 @@
     "/groups/{groupId}/activities/{activityId}": {
       "schema": { "$ref": "#/entities/GroupActivity" },
       "description": "Activity log entries within a group."
+    },
+    "/groups/{groupId}/invites/{token}": {
+      "schema": { "$ref": "#/entities/GroupInvite" },
+      "description": "Group-scoped mirror of invitation links visible to all equal-permission members."
+    },
+    "/groups/{groupId}/emailInvites/{inviteId}": {
+      "schema": { "$ref": "#/entities/GroupEmailInvite" },
+      "description": "Tracked email invitations within a group."
     },
     "/notifications/{notificationId}": {
       "schema": { "$ref": "#/entities/Notification" },
