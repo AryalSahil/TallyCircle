@@ -126,4 +126,28 @@ export const DIRTY_DOZEN_CASES = [
     payload: { groupId: 'g1', email: 'victim@example.com', status: 'pending' },
     expected: 'PERMISSION_DENIED',
   },
+  {
+    name: '17. Friend request sender spoofing or self-request',
+    path: '/friendRequests/userB_userC',
+    operation: 'create',
+    auth: { uid: 'userA', token: { email_verified: true } },
+    payload: { users: ['userB', 'userC'], senderId: 'userB', recipientId: 'userC', status: 'pending' },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '18. Sender attempting to self-accept pending friend request',
+    path: '/friendRequests/userA_userB',
+    operation: 'update',
+    auth: { uid: 'userA', token: { email_verified: true } },
+    payload: { status: 'accepted' },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '19. Creating accepted friendship without atomic friendRequests acceptance',
+    path: '/friendships/userA_userB',
+    operation: 'create',
+    auth: { uid: 'userB', token: { email_verified: true } },
+    payload: { users: ['userA', 'userB'], requesterUid: 'userA', recipientUid: 'userB', status: 'accepted' },
+    expected: 'PERMISSION_DENIED',
+  },
 ];

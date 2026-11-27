@@ -6,9 +6,9 @@ import {
   writeBatch,
   Timestamp,
 } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, handleFirestoreError, logFirestoreError, OperationType } from '../lib/firebase';
 import type { CurrencyCode, PublicProfile, ThemePreference, UserPrivateProfile } from '../types';
-import { normalizeHandle, sha256Hex } from '../utils/helpers';
+import { normalizeHandle, sanitizeHandleInput, sha256Hex } from '../utils/helpers';
 import { isSupportedCurrency, normalizeExpenseTag } from '../utils/finance';
 
 const publicProfileCache = new Map<string, PublicProfile>();
@@ -26,42 +26,54 @@ export async function ensureUserProfile(firebaseUser: User): Promise<UserPrivate
 
   if (existingSnap.exists()) {
     const profile = existingSnap.data() as UserPrivateProfile;
-    // Ensure public profile and lookup entries exist
+    // Ensure public profile and both lookup entries exist
     const emailKey = `email_${await sha256Hex(profile.email)}`;
     const handleKey = `handle_${profile.handle}`;
+    const emailLookupRef = doc(db, 'userLookup', emailKey);
+    const handleLookupRef = doc(db, 'userLookup', handleKey);
     try {
-      const pubSnap = await getDoc(publicRef);
-      if (!pubSnap.exists()) {
+      const [pubSnap, emailSnap, handleSnap] = await Promise.all([
+        getDoc(publicRef),
+        getDoc(emailLookupRef),
+        getDoc(handleLookupRef),
+      ]);
+      if (!pubSnap.exists() || !emailSnap.exists() || !handleSnap.exists()) {
         const batch = writeBatch(db);
-        batch.set(publicRef, {
-          uid: profile.uid,
-          displayName: profile.fullName,
-          handle: profile.handle,
-          photoUrl: profile.photoUrl || '',
-          upiId: profile.upiId || '',
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-        batch.set(doc(db, 'userLookup', emailKey), {
-          uid: profile.uid,
-          displayName: profile.fullName,
-          handle: profile.handle,
-          photoUrl: profile.photoUrl || '',
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-        batch.set(doc(db, 'userLookup', handleKey), {
-          uid: profile.uid,
-          displayName: profile.fullName,
-          handle: profile.handle,
-          photoUrl: profile.photoUrl || '',
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
+        if (!pubSnap.exists()) {
+          batch.set(publicRef, {
+            uid: profile.uid,
+            displayName: profile.fullName,
+            handle: profile.handle,
+            photoUrl: profile.photoUrl || '',
+            upiId: profile.upiId || '',
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
+        if (!emailSnap.exists()) {
+          batch.set(emailLookupRef, {
+            uid: profile.uid,
+            displayName: profile.fullName,
+            handle: profile.handle,
+            photoUrl: profile.photoUrl || '',
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
+        if (!handleSnap.exists()) {
+          batch.set(handleLookupRef, {
+            uid: profile.uid,
+            displayName: profile.fullName,
+            handle: profile.handle,
+            photoUrl: profile.photoUrl || '',
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
         await batch.commit();
       }
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `publicProfiles/${firebaseUser.uid}`);
+      logFirestoreError(err, OperationType.WRITE, `publicProfiles/${firebaseUser.uid}`);
     }
     return profile;
   }
@@ -142,7 +154,20 @@ export async function updateUserProfile(
   const phone = (updates.phone ?? current.phone ?? '').trim().slice(0, 30);
   const upiId = (updates.upiId ?? current.upiId ?? '').trim().slice(0, 100);
   const photoUrl = (updates.photoUrl ?? current.photoUrl ?? '').trim().slice(0, 250000);
-  const newHandle = updates.handle ? normalizeHandle(updates.handle) : current.handle;
+  let newHandle = current.handle;
+  if (updates.handle !== undefined) {
+    const cleaned = sanitizeHandleInput(updates.handle);
+    if (cleaned.length < 2) {
+      throw new Error('Username handle must be at least 2 characters (letters, numbers, or underscores).');
+    }
+    newHandle = cleaned;
+    if (newHandle !== current.handle) {
+      const handleCheck = await getDoc(doc(db, 'userLookup', `handle_${newHandle}`));
+      if (handleCheck.exists() && handleCheck.data()?.uid !== current.uid) {
+        throw new Error(`Username @${newHandle} is already taken. Please choose another.`);
+      }
+    }
+  }
   const theme = updates.theme ?? current.theme ?? 'system';
   const preferredCurrency: CurrencyCode = isSupportedCurrency(updates.preferredCurrency)
     ? updates.preferredCurrency
@@ -264,9 +289,14 @@ export async function findUserByEmailOrHandle(queryStr: string): Promise<{
   const trimmed = queryStr.trim().toLowerCase();
   if (!trimmed) return null;
 
-  const lookupKey = trimmed.includes('@') && !trimmed.startsWith('@')
-    ? `email_${await sha256Hex(trimmed)}`
-    : `handle_${normalizeHandle(trimmed.replace(/^@/, ''))}`;
+  let lookupKey: string;
+  if (trimmed.includes('@') && !trimmed.startsWith('@')) {
+    lookupKey = `email_${await sha256Hex(trimmed)}`;
+  } else {
+    const cleanHandle = sanitizeHandleInput(trimmed);
+    if (cleanHandle.length < 2) return null;
+    lookupKey = `handle_${cleanHandle}`;
+  }
 
   try {
     const snap = await getDoc(doc(db, 'userLookup', lookupKey));
@@ -279,6 +309,7 @@ export async function findUserByEmailOrHandle(queryStr: string): Promise<{
       createdAt: Timestamp;
     };
   } catch (err) {
-    handleFirestoreError(err, OperationType.GET, `userLookup/${lookupKey}`);
+    logFirestoreError(err, OperationType.GET, `userLookup/${lookupKey}`);
+    throw new Error('Could not search users right now. Please check your connection and try again.');
   }
 }

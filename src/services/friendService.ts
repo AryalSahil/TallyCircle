@@ -3,6 +3,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocFromServer,
   onSnapshot,
   query,
   runTransaction,
@@ -11,13 +12,62 @@ import {
   Timestamp,
   updateDoc,
   where,
-  writeBatch,
   Unsubscribe,
 } from 'firebase/firestore';
-import { db, handleFirestoreError, logFirestoreError, OperationType } from '../lib/firebase';
-import type { FriendInvite, Friendship, UserPrivateProfile } from '../types';
+import { auth, db, logFirestoreError, OperationType } from '../lib/firebase';
+import type {
+  FriendInvite,
+  FriendRequest,
+  Friendship,
+  PublicProfile,
+  UserPrivateProfile,
+} from '../types';
 import { deterministicFriendshipId, generateToken } from '../utils/helpers';
 import { createNotification } from './notificationService';
+
+export type SendFriendRequestResult =
+  | 'created'
+  | 'already_friends'
+  | 'already_pending'
+  | 'incoming_pending';
+
+export function toFriendlyFriendError(
+  err: unknown,
+  fallback = 'Could not complete that friend action. Please try again.'
+): string {
+  if (!err) return fallback;
+  const raw = err instanceof Error ? err.message : String(err);
+  const lower = raw.toLowerCase();
+
+  if (
+    lower.includes('missing or insufficient permissions') ||
+    lower.includes('permission-denied') ||
+    lower.includes('permission_denied')
+  ) {
+    return 'You do not have permission for this action. Please make sure your email is verified or sign in again.';
+  }
+  if (lower.includes('offline') || lower.includes('unavailable') || lower.includes('network')) {
+    return 'Network unavailable. Please check your internet connection and try again.';
+  }
+  if (lower.includes('unauthenticated') || lower.includes('not signed in')) {
+    return 'Please sign in again to continue.';
+  }
+  // Never surface serialized FirestoreErrorInfo JSON strings to end users
+  if (raw.trim().startsWith('{')) {
+    return fallback;
+  }
+  return raw || fallback;
+}
+
+function throwFriendlyFirestoreError(
+  err: unknown,
+  operationType: OperationType,
+  path: string,
+  fallback: string
+): never {
+  logFirestoreError(err, operationType, path);
+  throw new Error(toFriendlyFriendError(err, fallback));
+}
 
 export function subscribeFriendships(
   uid: string,
@@ -35,8 +85,32 @@ export function subscribeFriendships(
       callback(items);
     },
     (error) => {
-      const info = logFirestoreError(error, OperationType.LIST, 'friendships');
-      if (onError) onError(new Error(info.error));
+      logFirestoreError(error, OperationType.LIST, 'friendships');
+      if (onError) onError(new Error(toFriendlyFriendError(error, 'Could not sync friends list.')));
+    }
+  );
+}
+
+export function subscribeFriendRequests(
+  uid: string,
+  callback: (items: FriendRequest[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  const q = query(collection(db, 'friendRequests'), where('users', 'array-contains', uid));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const items = snapshot.docs
+        .map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<FriendRequest, 'id'>),
+        }))
+        .sort((a, b) => (b.updatedAt?.toMillis?.() ?? 0) - (a.updatedAt?.toMillis?.() ?? 0));
+      callback(items);
+    },
+    (error) => {
+      logFirestoreError(error, OperationType.LIST, 'friendRequests');
+      if (onError) onError(new Error(toFriendlyFriendError(error, 'Could not sync friend requests.')));
     }
   );
 }
@@ -44,65 +118,266 @@ export function subscribeFriendships(
 export async function sendFriendRequest(
   me: UserPrivateProfile,
   targetUid: string
-): Promise<'created' | 'already_friends' | 'already_pending'> {
-  if (targetUid === me.uid) {
-    throw new Error('You cannot add yourself as a friend.');
+): Promise<SendFriendRequestResult> {
+  const currentUid = auth.currentUser?.uid;
+  if (!currentUid || currentUid !== me.uid) {
+    throw new Error('Please sign in again before sending friend requests.');
+  }
+  const cleanTargetUid = targetUid.trim();
+  if (!cleanTargetUid) {
+    throw new Error('User not found.');
+  }
+  if (cleanTargetUid === me.uid) {
+    throw new Error('You cannot send a friend request to yourself.');
   }
 
-  const friendshipId = deterministicFriendshipId(me.uid, targetUid);
-  const ref = doc(db, 'friendships', friendshipId);
-
-  let snap;
+  let targetSnap;
   try {
-    snap = await getDoc(ref);
-  } catch (err) {
-    handleFirestoreError(err, OperationType.GET, `friendships/${friendshipId}`);
+    targetSnap = await getDocFromServer(doc(db, 'publicProfiles', cleanTargetUid));
+  } catch {
+    try {
+      targetSnap = await getDoc(doc(db, 'publicProfiles', cleanTargetUid));
+    } catch (err) {
+      throwFriendlyFirestoreError(
+        err,
+        OperationType.GET,
+        `publicProfiles/${cleanTargetUid}`,
+        'Could not verify that user account. Please try again.'
+      );
+    }
   }
 
-  const sortedUsers: [string, string] = me.uid < targetUid ? [me.uid, targetUid] : [targetUid, me.uid];
+  if (!targetSnap.exists()) {
+    throw new Error('User not found.');
+  }
+  const targetProfile = targetSnap.data() as PublicProfile;
 
-  if (snap.exists()) {
-    const existing = snap.data() as Omit<Friendship, 'id'>;
-    if (existing.status === 'accepted') return 'already_friends';
-    if (existing.status === 'pending') return 'already_pending';
+  const pairId = deterministicFriendshipId(me.uid, cleanTargetUid);
+  const sortedUsers: [string, string] =
+    me.uid < cleanTargetUid ? [me.uid, cleanTargetUid] : [cleanTargetUid, me.uid];
+  const friendshipRef = doc(db, 'friendships', pairId);
+  const requestRef = doc(db, 'friendRequests', pairId);
 
-    // Re-send after rejection
-    try {
-      await updateDoc(ref, {
-        status: 'pending',
-        requesterUid: me.uid,
-        recipientUid: targetUid,
-        updatedAt: serverTimestamp(),
-      });
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `friendships/${friendshipId}`);
-    }
-  } else {
-    try {
-      await setDoc(ref, {
+  let outcome: SendFriendRequestResult;
+  try {
+    outcome = await runTransaction(db, async (tx) => {
+      const [fSnap, reqSnap] = await Promise.all([
+        tx.get(friendshipRef),
+        tx.get(requestRef),
+      ]);
+
+      if (fSnap.exists()) {
+        const fData = fSnap.data() as Omit<Friendship, 'id'>;
+        if (fData.status === 'accepted') {
+          return 'already_friends' as const;
+        }
+        if (fData.status === 'pending') {
+          return fData.requesterUid === me.uid
+            ? ('already_pending' as const)
+            : ('incoming_pending' as const);
+        }
+      }
+
+      if (reqSnap.exists()) {
+        const reqData = reqSnap.data() as Omit<FriendRequest, 'id'>;
+        if (reqData.status === 'pending') {
+          return reqData.senderId === me.uid
+            ? ('already_pending' as const)
+            : ('incoming_pending' as const);
+        }
+
+        tx.update(requestRef, {
+          senderId: me.uid,
+          recipientId: cleanTargetUid,
+          senderUsername: me.handle,
+          senderDisplayName: me.fullName.slice(0, 80),
+          senderPhotoUrl: (me.photoUrl || '').slice(0, 250000),
+          recipientUsername: targetProfile.handle,
+          recipientDisplayName: targetProfile.displayName.slice(0, 80),
+          recipientPhotoUrl: (targetProfile.photoUrl || '').slice(0, 250000),
+          status: 'pending',
+          updatedAt: serverTimestamp(),
+        });
+        return 'created' as const;
+      }
+
+      tx.set(requestRef, {
         users: sortedUsers,
-        requesterUid: me.uid,
-        recipientUid: targetUid,
+        senderId: me.uid,
+        recipientId: cleanTargetUid,
+        senderUsername: me.handle,
+        senderDisplayName: me.fullName.slice(0, 80),
+        senderPhotoUrl: (me.photoUrl || '').slice(0, 250000),
+        recipientUsername: targetProfile.handle,
+        recipientDisplayName: targetProfile.displayName.slice(0, 80),
+        recipientPhotoUrl: (targetProfile.photoUrl || '').slice(0, 250000),
         status: 'pending',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-    } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, `friendships/${friendshipId}`);
+      return 'created' as const;
+    });
+  } catch (err) {
+    throwFriendlyFirestoreError(
+      err,
+      OperationType.WRITE,
+      `friendRequests/${pairId}`,
+      'Could not send friend request right now. Please try again.'
+    );
+  }
+
+  if (outcome === 'created') {
+    try {
+      await createNotification({
+        recipientUid: cleanTargetUid,
+        senderUid: me.uid,
+        senderName: me.fullName,
+        type: 'friend_request',
+        title: 'New friend request',
+        body: `${me.fullName} (@${me.handle}) sent you a friend request.`,
+        link: '/friends',
+      });
+    } catch {
+      // Notification failure is non-fatal once the friend request itself succeeds
     }
   }
 
-  await createNotification({
-    recipientUid: targetUid,
-    senderUid: me.uid,
-    senderName: me.fullName,
-    type: 'friend_request',
-    title: 'New friend request',
-    body: `${me.fullName} (@${me.handle}) sent you a friend request.`,
-    link: '/friends',
-  });
+  return outcome;
+}
 
-  return 'created';
+export async function acceptFriendRequest(
+  me: UserPrivateProfile,
+  request: FriendRequest
+): Promise<void> {
+  if (request.recipientId !== me.uid) {
+    throw new Error('Only the recipient can accept this friend request.');
+  }
+  if (request.senderId === me.uid) {
+    throw new Error('You cannot accept your own friend request.');
+  }
+
+  const pairId = deterministicFriendshipId(request.senderId, request.recipientId);
+  const reqRef = doc(db, 'friendRequests', request.id);
+  const friendshipRef = doc(db, 'friendships', pairId);
+
+  try {
+    await runTransaction(db, async (tx) => {
+      const [reqSnap, fSnap] = await Promise.all([
+        tx.get(reqRef),
+        tx.get(friendshipRef),
+      ]);
+
+      if (!reqSnap.exists()) {
+        throw new Error('This friend request is no longer available.');
+      }
+      const reqData = reqSnap.data() as Omit<FriendRequest, 'id'>;
+      if (reqData.recipientId !== me.uid) {
+        throw new Error('Only the recipient can accept this friend request.');
+      }
+      if (reqData.status === 'accepted') {
+        if (!fSnap.exists()) {
+          throw new Error('Friend request was already processed.');
+        }
+        return;
+      }
+      if (reqData.status !== 'pending') {
+        throw new Error('This friend request is no longer pending.');
+      }
+
+      const sortedUsers: [string, string] =
+        reqData.senderId < reqData.recipientId
+          ? [reqData.senderId, reqData.recipientId]
+          : [reqData.recipientId, reqData.senderId];
+
+      tx.update(reqRef, {
+        status: 'accepted',
+        updatedAt: serverTimestamp(),
+      });
+
+      if (fSnap.exists()) {
+        tx.update(friendshipRef, {
+          requesterUid: reqData.senderId,
+          recipientUid: reqData.recipientId,
+          status: 'accepted',
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        tx.set(friendshipRef, {
+          users: sortedUsers,
+          requesterUid: reqData.senderId,
+          recipientUid: reqData.recipientId,
+          status: 'accepted',
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+    });
+  } catch (err) {
+    throwFriendlyFirestoreError(
+      err,
+      OperationType.UPDATE,
+      `friendRequests/${request.id}`,
+      'Could not accept friend request. Please try again.'
+    );
+  }
+
+  try {
+    await createNotification({
+      recipientUid: request.senderId,
+      senderUid: me.uid,
+      senderName: me.fullName,
+      type: 'friend_accepted',
+      title: 'Friend request accepted',
+      body: `${me.fullName} accepted your friend request.`,
+      link: '/friends',
+    });
+  } catch {
+    // Non-fatal
+  }
+}
+
+export async function rejectFriendRequest(
+  me: UserPrivateProfile,
+  request: FriendRequest
+): Promise<void> {
+  if (request.recipientId !== me.uid) {
+    throw new Error('Only the recipient can decline this friend request.');
+  }
+  try {
+    await updateDoc(doc(db, 'friendRequests', request.id), {
+      status: 'rejected',
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    throwFriendlyFirestoreError(
+      err,
+      OperationType.UPDATE,
+      `friendRequests/${request.id}`,
+      'Could not decline friend request. Please try again.'
+    );
+  }
+}
+
+export async function cancelFriendRequest(
+  me: UserPrivateProfile,
+  request: FriendRequest
+): Promise<void> {
+  if (request.senderId !== me.uid) {
+    throw new Error('Only the sender can cancel this friend request.');
+  }
+  try {
+    await updateDoc(doc(db, 'friendRequests', request.id), {
+      status: 'cancelled',
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    throwFriendlyFirestoreError(
+      err,
+      OperationType.UPDATE,
+      `friendRequests/${request.id}`,
+      'Could not cancel friend request. Please try again.'
+    );
+  }
 }
 
 export async function respondFriendRequest(
@@ -117,19 +392,28 @@ export async function respondFriendRequest(
       updatedAt: serverTimestamp(),
     });
   } catch (err) {
-    handleFirestoreError(err, OperationType.UPDATE, `friendships/${friendship.id}`);
+    throwFriendlyFirestoreError(
+      err,
+      OperationType.UPDATE,
+      `friendships/${friendship.id}`,
+      'Could not update friend request. Please try again.'
+    );
   }
 
   if (decision === 'accepted') {
-    await createNotification({
-      recipientUid: friendship.requesterUid,
-      senderUid: me.uid,
-      senderName: me.fullName,
-      type: 'friend_accepted',
-      title: 'Friend request accepted',
-      body: `${me.fullName} accepted your friend request.`,
-      link: '/friends',
-    });
+    try {
+      await createNotification({
+        recipientUid: friendship.requesterUid,
+        senderUid: me.uid,
+        senderName: me.fullName,
+        type: 'friend_accepted',
+        title: 'Friend request accepted',
+        body: `${me.fullName} accepted your friend request.`,
+        link: '/friends',
+      });
+    } catch {
+      // Non-fatal
+    }
   }
 }
 
@@ -157,7 +441,12 @@ export async function updateFriendDetails(
       updatedAt: serverTimestamp(),
     });
   } catch (err) {
-    handleFirestoreError(err, OperationType.UPDATE, `friendships/${friendship.id}`);
+    throwFriendlyFirestoreError(
+      err,
+      OperationType.UPDATE,
+      `friendships/${friendship.id}`,
+      'Could not save friend details. Please try again.'
+    );
   }
 }
 
@@ -165,7 +454,12 @@ export async function removeFriend(friendshipId: string): Promise<void> {
   try {
     await deleteDoc(doc(db, 'friendships', friendshipId));
   } catch (err) {
-    handleFirestoreError(err, OperationType.DELETE, `friendships/${friendshipId}`);
+    throwFriendlyFirestoreError(
+      err,
+      OperationType.DELETE,
+      `friendships/${friendshipId}`,
+      'Could not remove friend. Please try again.'
+    );
   }
 }
 
@@ -194,7 +488,12 @@ export async function createFriendInvite(
     const snap = await getDoc(ref);
     return snap.data() as FriendInvite;
   } catch (err) {
-    handleFirestoreError(err, OperationType.CREATE, `friendInvites/${token}`);
+    throwFriendlyFirestoreError(
+      err,
+      OperationType.CREATE,
+      `friendInvites/${token}`,
+      'Could not create invite link. Please try again.'
+    );
   }
 }
 
@@ -216,8 +515,8 @@ export function subscribeMyFriendInvites(
       callback(items);
     },
     (error) => {
-      const info = logFirestoreError(error, OperationType.LIST, 'friendInvites');
-      if (onError) onError(new Error(info.error));
+      logFirestoreError(error, OperationType.LIST, 'friendInvites');
+      if (onError) onError(new Error(toFriendlyFriendError(error, 'Could not sync invite links.')));
     }
   );
 }
@@ -227,7 +526,12 @@ export async function getFriendInvite(token: string): Promise<FriendInvite | nul
     const snap = await getDoc(doc(db, 'friendInvites', token));
     return snap.exists() ? (snap.data() as FriendInvite) : null;
   } catch (err) {
-    handleFirestoreError(err, OperationType.GET, `friendInvites/${token}`);
+    throwFriendlyFirestoreError(
+      err,
+      OperationType.GET,
+      `friendInvites/${token}`,
+      'Could not verify this friend invitation link.'
+    );
   }
 }
 
@@ -273,23 +577,43 @@ export async function redeemFriendInvite(
     )) {
       throw err;
     }
-    handleFirestoreError(err, OperationType.UPDATE, `friendInvites/${token}`);
+    throwFriendlyFirestoreError(
+      err,
+      OperationType.UPDATE,
+      `friendInvites/${token}`,
+      'Could not redeem this friend invitation link.'
+    );
   }
 
-  const friendshipId = deterministicFriendshipId(me.uid, invite.creatorUid);
-  const fSnap = await getDoc(doc(db, 'friendships', friendshipId));
+  const pairId = deterministicFriendshipId(me.uid, invite.creatorUid);
+  const [fSnap, reqSnap] = await Promise.all([
+    getDoc(doc(db, 'friendships', pairId)),
+    getDoc(doc(db, 'friendRequests', pairId)),
+  ]);
+
   if (fSnap.exists()) {
     const existing = fSnap.data() as Omit<Friendship, 'id'>;
     if (existing.status === 'accepted') {
       return { creatorName: invite.creatorName, status: 'already_friends' };
     }
     if (existing.status === 'pending' && existing.recipientUid === me.uid) {
-      await respondFriendRequest(me, { id: friendshipId, ...existing }, 'accepted');
+      await respondFriendRequest(me, { id: pairId, ...existing }, 'accepted');
       return { creatorName: invite.creatorName, status: 'accepted' };
     }
   }
 
-  await sendFriendRequest(me, invite.creatorUid);
+  if (reqSnap.exists()) {
+    const reqData = reqSnap.data() as Omit<FriendRequest, 'id'>;
+    if (reqData.status === 'pending' && reqData.recipientId === me.uid) {
+      await acceptFriendRequest(me, { id: pairId, ...reqData });
+      return { creatorName: invite.creatorName, status: 'accepted' };
+    }
+  }
+
+  const sendRes = await sendFriendRequest(me, invite.creatorUid);
+  if (sendRes === 'already_friends') {
+    return { creatorName: invite.creatorName, status: 'already_friends' };
+  }
   return { creatorName: invite.creatorName, status: 'requested' };
 }
 
@@ -297,6 +621,11 @@ export async function revokeFriendInvite(token: string): Promise<void> {
   try {
     await deleteDoc(doc(db, 'friendInvites', token));
   } catch (err) {
-    handleFirestoreError(err, OperationType.DELETE, `friendInvites/${token}`);
+    throwFriendlyFirestoreError(
+      err,
+      OperationType.DELETE,
+      `friendInvites/${token}`,
+      'Could not revoke friend invite link.'
+    );
   }
 }

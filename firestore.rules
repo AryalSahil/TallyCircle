@@ -96,6 +96,28 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidFriendRequest(data, requestId) {
+      return data.keys().hasAll(['users', 'senderId', 'recipientId', 'senderUsername', 'recipientUsername', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['users', 'senderId', 'recipientId', 'senderUsername', 'senderDisplayName', 'senderPhotoUrl', 'recipientUsername', 'recipientDisplayName', 'recipientPhotoUrl', 'status', 'createdAt', 'updatedAt'])
+        && data.users is list && data.users.size() == 2
+        && data.users[0] is string && data.users[0].size() >= 1 && data.users[0].size() <= 128
+        && data.users[1] is string && data.users[1].size() >= 1 && data.users[1].size() <= 128
+        && data.users[0] < data.users[1]
+        && requestId == data.users[0] + '_' + data.users[1]
+        && data.senderId is string && data.senderId in data.users
+        && data.recipientId is string && data.recipientId in data.users
+        && data.senderId != data.recipientId
+        && data.senderUsername is string && data.senderUsername.size() >= 2 && data.senderUsername.size() <= 40
+        && (!('senderDisplayName' in data) || (data.senderDisplayName is string && data.senderDisplayName.size() <= 80))
+        && (!('senderPhotoUrl' in data) || (data.senderPhotoUrl is string && data.senderPhotoUrl.size() <= 250000))
+        && data.recipientUsername is string && data.recipientUsername.size() >= 2 && data.recipientUsername.size() <= 40
+        && (!('recipientDisplayName' in data) || (data.recipientDisplayName is string && data.recipientDisplayName.size() <= 80))
+        && (!('recipientPhotoUrl' in data) || (data.recipientPhotoUrl is string && data.recipientPhotoUrl.size() <= 250000))
+        && data.status in ['pending', 'accepted', 'rejected', 'cancelled']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     function isValidFriendInvite(data) {
       return data.keys().hasAll(['token', 'creatorUid', 'creatorName', 'expiresAt', 'maxUses', 'usesCount', 'usedBy', 'createdAt', 'updatedAt'])
         && data.keys().hasOnly(['token', 'creatorUid', 'creatorName', 'expiresAt', 'maxUses', 'usesCount', 'usedBy', 'createdAt', 'updatedAt'])
@@ -311,12 +333,19 @@ service cloud.firestore {
     }
 
     match /friendships/{friendshipId} {
-      allow get: if isValidId(friendshipId) && isVerifiedUser() && request.auth.uid in resource.data.users;
+      allow get: if isValidId(friendshipId) && isVerifiedUser() && (resource == null || request.auth.uid in resource.data.users);
       allow list: if isVerifiedUser() && request.auth.uid in resource.data.users;
       allow create: if isValidId(friendshipId) && isVerifiedUser()
         && isValidFriendship(incoming())
-        && incoming().requesterUid == request.auth.uid
-        && incoming().status == 'pending'
+        && incoming().users[0] < incoming().users[1]
+        && friendshipId == incoming().users[0] + '_' + incoming().users[1]
+        && incoming().status == 'accepted'
+        && request.auth.uid == incoming().recipientUid
+        && exists(/databases/$(database)/documents/friendRequests/$(friendshipId))
+        && get(/databases/$(database)/documents/friendRequests/$(friendshipId)).data.status == 'pending'
+        && get(/databases/$(database)/documents/friendRequests/$(friendshipId)).data.senderId == incoming().requesterUid
+        && get(/databases/$(database)/documents/friendRequests/$(friendshipId)).data.recipientId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/friendRequests/$(friendshipId)).data.status == 'accepted'
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
       allow update: if isValidId(friendshipId) && isVerifiedUser()
@@ -332,8 +361,14 @@ service cloud.firestore {
             && incoming().status in ['accepted', 'rejected']
             && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
           ||
-          (existing().status == 'rejected' && request.auth.uid == incoming().requesterUid
-            && incoming().status == 'pending'
+          (existing().status in ['pending', 'rejected']
+            && incoming().status == 'accepted'
+            && exists(/databases/$(database)/documents/friendRequests/$(friendshipId))
+            && get(/databases/$(database)/documents/friendRequests/$(friendshipId)).data.status == 'pending'
+            && get(/databases/$(database)/documents/friendRequests/$(friendshipId)).data.senderId == incoming().requesterUid
+            && get(/databases/$(database)/documents/friendRequests/$(friendshipId)).data.recipientId == request.auth.uid
+            && incoming().recipientUid == request.auth.uid
+            && getAfter(/databases/$(database)/documents/friendRequests/$(friendshipId)).data.status == 'accepted'
             && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'requesterUid', 'recipientUid', 'updatedAt']))
           ||
           (existing().status == 'accepted'
@@ -351,6 +386,56 @@ service cloud.firestore {
             && incoming().diff(existing()).affectedKeys().hasOnly(['nicknames', 'notes', 'updatedAt']))
         );
       allow delete: if isValidId(friendshipId) && isVerifiedUser() && request.auth.uid in existing().users;
+    }
+
+    match /friendRequests/{requestId} {
+      allow get: if isValidId(requestId) && isVerifiedUser() && (resource == null || request.auth.uid in resource.data.users);
+      allow list: if isVerifiedUser() && request.auth.uid in resource.data.users;
+      allow create: if isValidId(requestId) && isVerifiedUser()
+        && isValidFriendRequest(incoming(), requestId)
+        && incoming().senderId == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/publicProfiles/$(incoming().recipientId))
+        && (!exists(/databases/$(database)/documents/friendships/$(requestId))
+          || get(/databases/$(database)/documents/friendships/$(requestId)).data.status != 'accepted');
+      allow update: if isValidId(requestId) && isVerifiedUser()
+        && isValidFriendRequest(incoming(), requestId)
+        && request.auth.uid in existing().users
+        && incoming().users == existing().users
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (existing().status == 'pending'
+            && request.auth.uid == existing().recipientId
+            && incoming().senderId == existing().senderId
+            && incoming().recipientId == existing().recipientId
+            && (
+              (incoming().status == 'accepted'
+                && existsAfter(/databases/$(database)/documents/friendships/$(requestId))
+                && getAfter(/databases/$(database)/documents/friendships/$(requestId)).data.status == 'accepted')
+              || incoming().status == 'rejected'
+            )
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+          ||
+          (existing().status == 'pending'
+            && request.auth.uid == existing().senderId
+            && incoming().senderId == existing().senderId
+            && incoming().recipientId == existing().recipientId
+            && incoming().status == 'cancelled'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+          ||
+          (existing().status in ['rejected', 'cancelled', 'accepted']
+            && (!exists(/databases/$(database)/documents/friendships/$(requestId))
+              || get(/databases/$(database)/documents/friendships/$(requestId)).data.status != 'accepted')
+            && request.auth.uid == incoming().senderId
+            && incoming().recipientId in existing().users
+            && incoming().senderId != incoming().recipientId
+            && incoming().status == 'pending'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['senderId', 'recipientId', 'senderUsername', 'senderDisplayName', 'senderPhotoUrl', 'recipientUsername', 'recipientDisplayName', 'recipientPhotoUrl', 'status', 'updatedAt']))
+        );
+      allow delete: if isValidId(requestId) && isVerifiedUser() && request.auth.uid == existing().senderId && existing().status in ['pending', 'cancelled', 'rejected'];
     }
 
     match /friendInvites/{token} {
@@ -384,7 +469,7 @@ service cloud.firestore {
     }
 
     match /groups/{groupId} {
-      allow get: if isValidId(groupId) && isVerifiedUser() && request.auth.uid in resource.data.memberUids;
+      allow get: if isValidId(groupId) && isVerifiedUser() && (resource == null || request.auth.uid in resource.data.memberUids);
       allow list: if isVerifiedUser() && request.auth.uid in resource.data.memberUids;
       allow create: if isValidId(groupId) && isVerifiedUser()
         && isValidGroup(incoming())
@@ -644,7 +729,7 @@ service cloud.firestore {
     }
 
     match /notifications/{notificationId} {
-      allow get: if isValidId(notificationId) && isVerifiedUser() && resource.data.recipientUid == request.auth.uid;
+      allow get: if isValidId(notificationId) && isVerifiedUser() && (resource == null || resource.data.recipientUid == request.auth.uid);
       allow list: if isVerifiedUser() && resource.data.recipientUid == request.auth.uid;
       allow create: if isValidId(notificationId) && isVerifiedUser()
         && isValidNotification(incoming())

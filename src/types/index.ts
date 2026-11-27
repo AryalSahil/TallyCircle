@@ -82,6 +82,24 @@ export interface Friendship {
   updatedAt: Timestamp;
 }
 
+export type FriendRequestStatus = 'pending' | 'accepted' | 'rejected' | 'cancelled';
+
+export interface FriendRequest {
+  id: string;
+  users: [string, string];
+  senderId: string;
+  recipientId: string;
+  senderUsername: string;
+  senderDisplayName?: string;
+  senderPhotoUrl?: string;
+  recipientUsername: string;
+  recipientDisplayName?: string;
+  recipientPhotoUrl?: string;
+  status: FriendRequestStatus;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
 export interface FriendInvite {
   token: string;
   creatorUid: string;

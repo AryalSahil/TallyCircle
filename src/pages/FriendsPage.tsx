@@ -14,15 +14,19 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { useAppData } from '../contexts/AppDataContext';
 import { useToast } from '../contexts/ToastContext';
-import type { FriendInvite, Friendship, PublicProfile } from '../types';
+import type { FriendInvite, FriendRequest, Friendship, PublicProfile } from '../types';
 import { findUserByEmailOrHandle } from '../services/userService';
 import {
+  acceptFriendRequest,
+  cancelFriendRequest,
   createFriendInvite,
+  rejectFriendRequest,
   removeFriend,
   respondFriendRequest,
   revokeFriendInvite,
   sendFriendRequest,
   subscribeMyFriendInvites,
+  toFriendlyFriendError,
   updateFriendDetails,
 } from '../services/friendService';
 import {
@@ -33,9 +37,29 @@ import {
 import { Avatar, Button, Card, EmptyState, InputField, Modal } from '../components/ui/Primitives';
 import { ConfirmModal } from '../components/modals/ConfirmModal';
 
+type UnifiedPendingRequest =
+  | {
+      kind: 'request';
+      id: string;
+      otherUid: string;
+      displayName: string;
+      handle: string;
+      photoUrl?: string;
+      request: FriendRequest;
+    }
+  | {
+      kind: 'legacy';
+      id: string;
+      otherUid: string;
+      displayName: string;
+      handle: string;
+      photoUrl?: string;
+      friendship: Friendship;
+    };
+
 export function FriendsPage() {
   const { profile } = useAuth();
-  const { friendships, profilesMap, refreshProfiles } = useAppData();
+  const { friendships, friendRequests, profilesMap, refreshProfiles } = useAppData();
   const { showToast } = useToast();
 
   const [searchInput, setSearchInput] = useState('');
@@ -50,6 +74,8 @@ export function FriendsPage() {
 
   const [myInvites, setMyInvites] = useState<FriendInvite[]>([]);
   const [creatingInvite, setCreatingInvite] = useState(false);
+  const [sendingUid, setSendingUid] = useState<string | null>(null);
+  const [respondingId, setRespondingId] = useState<string | null>(null);
   const [viewingProfile, setViewingProfile] = useState<{
     publicProfile: PublicProfile;
     friendship: Friendship;
@@ -65,9 +91,10 @@ export function FriendsPage() {
     null
   );
   const [revokeInviteToken, setRevokeInviteToken] = useState<string | null>(null);
-  const [cancelReqTarget, setCancelReqTarget] = useState<{ friendshipId: string; name: string } | null>(
-    null
-  );
+  const [cancelReqTarget, setCancelReqTarget] = useState<{
+    item: UnifiedPendingRequest;
+    name: string;
+  } | null>(null);
 
   useEffect(() => {
     if (!profile?.uid) return;
@@ -75,21 +102,87 @@ export function FriendsPage() {
     return () => unsub();
   }, [profile?.uid]);
 
-  const incomingRequests = useMemo(
-    () =>
-      friendships.filter(
-        (f) => f.status === 'pending' && f.recipientUid === profile?.uid
-      ),
-    [friendships, profile?.uid]
-  );
+  const incomingRequests = useMemo<UnifiedPendingRequest[]>(() => {
+    if (!profile?.uid) return [];
+    const items: UnifiedPendingRequest[] = [];
+    const seenIds = new Set<string>();
 
-  const outgoingRequests = useMemo(
-    () =>
-      friendships.filter(
-        (f) => f.status === 'pending' && f.requesterUid === profile?.uid
-      ),
-    [friendships, profile?.uid]
-  );
+    for (const req of friendRequests) {
+      if (req.status === 'pending' && req.recipientId === profile.uid) {
+        seenIds.add(req.id);
+        const sender = profilesMap[req.senderId];
+        items.push({
+          kind: 'request',
+          id: req.id,
+          otherUid: req.senderId,
+          displayName: sender?.displayName || req.senderDisplayName || req.senderUsername || req.senderId,
+          handle: sender?.handle || req.senderUsername || 'member',
+          photoUrl: sender?.photoUrl || req.senderPhotoUrl,
+          request: req,
+        });
+      }
+    }
+
+    for (const f of friendships) {
+      if (f.status === 'pending' && f.recipientUid === profile.uid && !seenIds.has(f.id)) {
+        const sender = profilesMap[f.requesterUid];
+        items.push({
+          kind: 'legacy',
+          id: f.id,
+          otherUid: f.requesterUid,
+          displayName: sender?.displayName || f.requesterUid,
+          handle: sender?.handle || 'member',
+          photoUrl: sender?.photoUrl,
+          friendship: f,
+        });
+      }
+    }
+
+    return items;
+  }, [friendRequests, friendships, profilesMap, profile?.uid]);
+
+  const outgoingRequests = useMemo<UnifiedPendingRequest[]>(() => {
+    if (!profile?.uid) return [];
+    const items: UnifiedPendingRequest[] = [];
+    const seenIds = new Set<string>();
+
+    for (const req of friendRequests) {
+      if (req.status === 'pending' && req.senderId === profile.uid) {
+        seenIds.add(req.id);
+        const recipient = profilesMap[req.recipientId];
+        items.push({
+          kind: 'request',
+          id: req.id,
+          otherUid: req.recipientId,
+          displayName:
+            recipient?.displayName ||
+            req.recipientDisplayName ||
+            req.recipientUsername ||
+            req.recipientId,
+          handle: recipient?.handle || req.recipientUsername || 'member',
+          photoUrl: recipient?.photoUrl || req.recipientPhotoUrl,
+          request: req,
+        });
+      }
+    }
+
+    for (const f of friendships) {
+      if (f.status === 'pending' && f.requesterUid === profile.uid && !seenIds.has(f.id)) {
+        const recipient = profilesMap[f.recipientUid];
+        items.push({
+          kind: 'legacy',
+          id: f.id,
+          otherUid: f.recipientUid,
+          displayName: recipient?.displayName || f.recipientUid,
+          handle: recipient?.handle || 'member',
+          photoUrl: recipient?.photoUrl,
+          friendship: f,
+        });
+      }
+    }
+
+    return items;
+  }, [friendRequests, friendships, profilesMap, profile?.uid]);
 
   const acceptedFriends = useMemo(
     () => friendships.filter((f) => f.status === 'accepted'),
@@ -107,7 +200,7 @@ export function FriendsPage() {
       if (found) await refreshProfiles([found.uid]);
     } catch (err: unknown) {
       showToast('Search failed', {
-        description: err instanceof Error ? err.message : 'Try again.',
+        description: toFriendlyFriendError(err, 'Could not search users. Try again.'),
         variant: 'error',
       });
     } finally {
@@ -116,21 +209,69 @@ export function FriendsPage() {
   };
 
   const handleSendRequest = async (targetUid: string) => {
-    if (!profile) return;
+    if (!profile || sendingUid === targetUid) return;
+    setSendingUid(targetUid);
     try {
       const status = await sendFriendRequest(profile, targetUid);
       if (status === 'already_friends') {
         showToast('You are already friends', { variant: 'info' });
       } else if (status === 'already_pending') {
         showToast('Friend request is already pending', { variant: 'info' });
+      } else if (status === 'incoming_pending') {
+        showToast('They already sent you a friend request', {
+          description: 'Check your incoming friend requests to accept.',
+          variant: 'info',
+        });
       } else {
         showToast('Friend request sent', { variant: 'success' });
       }
     } catch (err: unknown) {
       showToast('Could not send request', {
-        description: err instanceof Error ? err.message : 'Try again.',
+        description: toFriendlyFriendError(err, 'Could not send friend request. Try again.'),
         variant: 'error',
       });
+    } finally {
+      setSendingUid(null);
+    }
+  };
+
+  const handleAcceptRequest = async (item: UnifiedPendingRequest) => {
+    if (!profile || respondingId) return;
+    setRespondingId(item.id);
+    try {
+      if (item.kind === 'request') {
+        await acceptFriendRequest(profile, item.request);
+      } else {
+        await respondFriendRequest(profile, item.friendship, 'accepted');
+      }
+      showToast('Friend request accepted', { variant: 'success' });
+    } catch (err: unknown) {
+      showToast('Could not accept request', {
+        description: toFriendlyFriendError(err),
+        variant: 'error',
+      });
+    } finally {
+      setRespondingId(null);
+    }
+  };
+
+  const handleDeclineRequest = async (item: UnifiedPendingRequest) => {
+    if (!profile || respondingId) return;
+    setRespondingId(item.id);
+    try {
+      if (item.kind === 'request') {
+        await rejectFriendRequest(profile, item.request);
+      } else {
+        await respondFriendRequest(profile, item.friendship, 'rejected');
+      }
+      showToast('Request declined', { variant: 'info' });
+    } catch (err: unknown) {
+      showToast('Could not decline request', {
+        description: toFriendlyFriendError(err),
+        variant: 'error',
+      });
+    } finally {
+      setRespondingId(null);
     }
   };
 
@@ -142,7 +283,7 @@ export function FriendsPage() {
       showToast('Friend invite link created', { variant: 'success' });
     } catch (err: unknown) {
       showToast('Could not create invite', {
-        description: err instanceof Error ? err.message : 'Try again.',
+        description: toFriendlyFriendError(err, 'Could not create invite link. Try again.'),
         variant: 'error',
       });
     } finally {
@@ -224,14 +365,50 @@ export function FriendsPage() {
                         <p className="text-xs text-slate-500 truncate">@{searchResult.handle}</p>
                       </div>
                     </div>
-                    {searchResult.uid !== profile?.uid ? (
-                      <Button size="sm" onClick={() => handleSendRequest(searchResult.uid)}>
-                        <UserPlus className="w-3.5 h-3.5" />
-                        Add
-                      </Button>
-                    ) : (
-                      <span className="text-xs text-slate-400">You</span>
-                    )}
+                    {(() => {
+                      if (searchResult.uid === profile?.uid) {
+                        return <span className="text-xs text-slate-400">You</span>;
+                      }
+                      const isAccepted = acceptedFriends.some((f) => f.users.includes(searchResult.uid));
+                      if (isAccepted) {
+                        return (
+                          <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400 shrink-0">
+                            Friends
+                          </span>
+                        );
+                      }
+                      const isOutgoing = outgoingRequests.some((r) => r.otherUid === searchResult.uid);
+                      if (isOutgoing) {
+                        return (
+                          <Button size="sm" variant="outline" disabled>
+                            Pending
+                          </Button>
+                        );
+                      }
+                      const incomingMatch = incomingRequests.find((r) => r.otherUid === searchResult.uid);
+                      if (incomingMatch) {
+                        return (
+                          <Button
+                            size="sm"
+                            loading={respondingId === incomingMatch.id}
+                            onClick={() => handleAcceptRequest(incomingMatch)}
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            Accept
+                          </Button>
+                        );
+                      }
+                      return (
+                        <Button
+                          size="sm"
+                          loading={sendingUid === searchResult.uid}
+                          onClick={() => handleSendRequest(searchResult.uid)}
+                        >
+                          <UserPlus className="w-3.5 h-3.5" />
+                          Add
+                        </Button>
+                      );
+                    })()}
                   </div>
                 ) : (
                   <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -331,55 +508,44 @@ export function FriendsPage() {
                 </h3>
               </div>
               <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                {incomingRequests.map((req) => {
-                  const sender = profilesMap[req.requesterUid];
-                  return (
-                    <div key={req.id} className="px-4 sm:px-5 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <Avatar
-                          name={sender?.displayName || 'User'}
-                          photoUrl={sender?.photoUrl}
-                          size="sm"
-                        />
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
-                            {sender?.displayName || req.requesterUid}
-                          </p>
-                          <p className="text-xs text-slate-500 truncate">
-                            @{sender?.handle || 'member'}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 sm:flex items-center gap-2 shrink-0">
-                        <Button
-                          size="sm"
-                          onClick={async () => {
-                            if (!profile) return;
-                            await respondFriendRequest(profile, req, 'accepted');
-                            showToast('Friend request accepted', { variant: 'success' });
-                          }}
-                          className="w-full sm:w-auto"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                          Accept
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={async () => {
-                            if (!profile) return;
-                            await respondFriendRequest(profile, req, 'rejected');
-                            showToast('Request declined', { variant: 'info' });
-                          }}
-                          className="w-full sm:w-auto"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                          Decline
-                        </Button>
+                {incomingRequests.map((req) => (
+                  <div
+                    key={req.id}
+                    className="px-4 sm:px-5 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Avatar name={req.displayName} photoUrl={req.photoUrl} size="sm" />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
+                          {req.displayName}
+                        </p>
+                        <p className="text-xs text-slate-500 truncate">@{req.handle}</p>
                       </div>
                     </div>
-                  );
-                })}
+                    <div className="grid grid-cols-2 sm:flex items-center gap-2 shrink-0">
+                      <Button
+                        size="sm"
+                        loading={respondingId === req.id}
+                        disabled={Boolean(respondingId && respondingId !== req.id)}
+                        onClick={() => handleAcceptRequest(req)}
+                        className="w-full sm:w-auto"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        Accept
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={Boolean(respondingId)}
+                        onClick={() => handleDeclineRequest(req)}
+                        className="w-full sm:w-auto"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        Decline
+                      </Button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </Card>
           )}
@@ -392,38 +558,33 @@ export function FriendsPage() {
                 </h3>
               </div>
               <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                {outgoingRequests.map((req) => {
-                  const recipient = profilesMap[req.recipientUid];
-                  return (
-                    <div key={req.id} className="px-5 py-3 flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <Avatar
-                          name={recipient?.displayName || 'User'}
-                          photoUrl={recipient?.photoUrl}
-                          size="sm"
-                        />
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
-                            {recipient?.displayName || req.recipientUid}
-                          </p>
-                          <p className="text-xs text-slate-500">Pending acceptance</p>
-                        </div>
+                {outgoingRequests.map((req) => (
+                  <div key={req.id} className="px-5 py-3 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Avatar name={req.displayName} photoUrl={req.photoUrl} size="sm" />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
+                          {req.displayName}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          @{req.handle} · Pending acceptance
+                        </p>
                       </div>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() =>
-                          setCancelReqTarget({
-                            friendshipId: req.id,
-                            name: recipient?.displayName || 'this request',
-                          })
-                        }
-                      >
-                        Cancel
-                      </Button>
                     </div>
-                  );
-                })}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        setCancelReqTarget({
+                          item: req,
+                          name: req.displayName || 'this request',
+                        })
+                      }
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                ))}
               </div>
             </Card>
           )}
@@ -643,9 +804,16 @@ export function FriendsPage() {
         onClose={() => setRemoveTarget(null)}
         onConfirm={async () => {
           if (!removeTarget) return;
-          await removeFriend(removeTarget.friendshipId);
-          showToast(`Removed ${removeTarget.name}`, { variant: 'info' });
-          setRemoveTarget(null);
+          try {
+            await removeFriend(removeTarget.friendshipId);
+            showToast(`Removed ${removeTarget.name}`, { variant: 'info' });
+            setRemoveTarget(null);
+          } catch (err: unknown) {
+            showToast('Could not remove friend', {
+              description: toFriendlyFriendError(err),
+              variant: 'error',
+            });
+          }
         }}
         title={`Remove ${removeTarget?.name}?`}
         message="Removing a friend does not delete shared historical expenses in groups."
@@ -656,10 +824,21 @@ export function FriendsPage() {
         open={Boolean(cancelReqTarget)}
         onClose={() => setCancelReqTarget(null)}
         onConfirm={async () => {
-          if (!cancelReqTarget) return;
-          await removeFriend(cancelReqTarget.friendshipId);
-          showToast('Friend request cancelled', { variant: 'info' });
-          setCancelReqTarget(null);
+          if (!cancelReqTarget || !profile) return;
+          try {
+            if (cancelReqTarget.item.kind === 'request') {
+              await cancelFriendRequest(profile, cancelReqTarget.item.request);
+            } else {
+              await removeFriend(cancelReqTarget.item.id);
+            }
+            showToast('Friend request cancelled', { variant: 'info' });
+            setCancelReqTarget(null);
+          } catch (err: unknown) {
+            showToast('Could not cancel request', {
+              description: toFriendlyFriendError(err),
+              variant: 'error',
+            });
+          }
         }}
         title="Cancel friend request?"
         message={`Withdraw your pending friend request to ${cancelReqTarget?.name}?`}
@@ -671,9 +850,16 @@ export function FriendsPage() {
         onClose={() => setRevokeInviteToken(null)}
         onConfirm={async () => {
           if (!revokeInviteToken) return;
-          await revokeFriendInvite(revokeInviteToken);
-          showToast('Invite link revoked', { variant: 'info' });
-          setRevokeInviteToken(null);
+          try {
+            await revokeFriendInvite(revokeInviteToken);
+            showToast('Invite link revoked', { variant: 'info' });
+            setRevokeInviteToken(null);
+          } catch (err: unknown) {
+            showToast('Could not revoke link', {
+              description: toFriendlyFriendError(err),
+              variant: 'error',
+            });
+          }
         }}
         title="Revoke friend invite link?"
         message="Anyone with this link will no longer be able to send you a friend request using it."

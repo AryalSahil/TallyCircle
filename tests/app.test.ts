@@ -17,6 +17,7 @@ import {
   buildGroupWhatsAppInviteMessage,
   generateToken,
   isValidEmailAddress,
+  sanitizeHandleInput,
 } from '../src/utils/helpers.js';
 import { DIRTY_DOZEN_CASES } from '../firestore.rules.test.js';
 import { createServerApp } from '../server.js';
@@ -213,20 +214,30 @@ describe('Invitation Security, Messaging & Email Validation Helpers', () => {
     assert.equal(isValidEmailAddress('not-an-email'), false);
     assert.equal(isValidEmailAddress('missing@domain'), false);
   });
+
+  it('sanitizes @handles deterministically without generating random fallback handles', () => {
+    assert.equal(sanitizeHandleInput(' @Aarav_99 '), 'aarav_99');
+    assert.equal(sanitizeHandleInput('@a'), 'a');
+    assert.equal(sanitizeHandleInput('@@@'), '');
+  });
 });
 
 describe('Security Rules & Spec Invariants', () => {
-  it('contains all 16 Dirty Dozen + extended adversarial cases', () => {
-    assert.equal(DIRTY_DOZEN_CASES.length, 16);
+  it('contains all 19 Dirty Dozen + extended adversarial cases', () => {
+    assert.equal(DIRTY_DOZEN_CASES.length, 19);
     for (const c of DIRTY_DOZEN_CASES) {
       assert.equal(c.expected, 'PERMISSION_DENIED');
     }
   });
 
-  it('enforces default deny, email verification, terminal settlement locks, invite revocation, emailInvites, and atomic group delete in firestore.rules', () => {
+  it('enforces default deny, email verification, friendRequests rules, null-resource get guards, terminal settlement locks, invite revocation, emailInvites, and atomic group delete in firestore.rules', () => {
     const rules = fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf8');
     assert.ok(rules.includes('allow read, write: if false;'));
     assert.ok(rules.includes('request.auth.token.email_verified == true'));
+    assert.ok(rules.includes('match /friendRequests/{requestId}'));
+    assert.ok(rules.includes('function isValidFriendRequest(data, requestId)'));
+    assert.ok(rules.includes('resource == null || request.auth.uid in resource.data.users'));
+    assert.ok(rules.includes('resource == null || request.auth.uid in resource.data.memberUids'));
     assert.ok(rules.includes("existing().status != 'confirmed'"));
     assert.ok(rules.includes('!existsAfter(/databases/$(database)/documents/groups/$(groupId))'));
     assert.ok(rules.includes('data.nicknames.keys().hasOnly(data.users)'));

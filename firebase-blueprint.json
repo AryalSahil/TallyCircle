@@ -65,6 +65,26 @@
       },
       "required": ["users", "requesterUid", "recipientUid", "status", "createdAt", "updatedAt"]
     },
+    "FriendRequest": {
+      "title": "FriendRequest",
+      "description": "Friend request between two users with sender/recipient validation and atomic acceptance into friendships.",
+      "type": "object",
+      "properties": {
+        "users": { "type": "array" },
+        "senderId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "recipientId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "senderUsername": { "type": "string", "minLength": 2, "maxLength": 40 },
+        "senderDisplayName": { "type": "string", "maxLength": 80 },
+        "senderPhotoUrl": { "type": "string", "maxLength": 250000 },
+        "recipientUsername": { "type": "string", "minLength": 2, "maxLength": 40 },
+        "recipientDisplayName": { "type": "string", "maxLength": 80 },
+        "recipientPhotoUrl": { "type": "string", "maxLength": 250000 },
+        "status": { "type": "string", "enum": ["pending", "accepted", "rejected", "cancelled"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["users", "senderId", "recipientId", "senderUsername", "recipientUsername", "status", "createdAt", "updatedAt"]
+    },
     "FriendInvite": {
       "title": "FriendInvite",
       "description": "Shareable friend invitation token with expiry and usage limit.",
@@ -268,7 +288,11 @@
     },
     "/friendships/{friendshipId}": {
       "schema": { "$ref": "#/entities/Friendship" },
-      "description": "Friendship requests and accepted links."
+      "description": "Accepted friendship links and legacy connections."
+    },
+    "/friendRequests/{requestId}": {
+      "schema": { "$ref": "#/entities/FriendRequest" },
+      "description": "Pending, accepted, rejected, and cancelled friend requests keyed deterministically by sorted UIDs."
     },
     "/friendInvites/{token}": {
       "schema": { "$ref": "#/entities/FriendInvite" },

@@ -27,14 +27,20 @@ export async function sha256Hex(input: string): Promise<string> {
   return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-export function normalizeHandle(raw: string): string {
-  const cleaned = raw
+export function sanitizeHandleInput(raw: string): string {
+  return raw
     .trim()
+    .replace(/^@+/, '')
     .toLowerCase()
     .replace(/[^a-z0-9_]/g, '_')
     .replace(/_+/g, '_')
-    .replace(/^_|_$/g, '');
-  return cleaned.length >= 2 ? cleaned.slice(0, 32) : `user_${Math.random().toString(36).slice(2, 7)}`;
+    .replace(/^_|_$/g, '')
+    .slice(0, 32);
+}
+
+export function normalizeHandle(raw: string): string {
+  const cleaned = sanitizeHandleInput(raw);
+  return cleaned.length >= 2 ? cleaned : `user_${Math.random().toString(36).slice(2, 7)}`;
 }
 
 export function generateToken(prefix = ''): string {

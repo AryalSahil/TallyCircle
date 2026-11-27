@@ -5,6 +5,7 @@ import { useAuth } from './AuthContext';
 import type {
   AppNotification,
   Expense,
+  FriendRequest,
   Friendship,
   Group,
   GroupActivity,
@@ -14,7 +15,7 @@ import type {
 import { subscribeGroups, subscribeGroupActivities } from '../services/groupService';
 import { subscribeGroupExpenses } from '../services/expenseService';
 import { subscribeGroupSettlements } from '../services/settlementService';
-import { subscribeFriendships } from '../services/friendService';
+import { subscribeFriendRequests, subscribeFriendships } from '../services/friendService';
 import { subscribeNotifications } from '../services/notificationService';
 import { getPublicProfiles } from '../services/userService';
 import { computeGroupBalances } from '../utils/finance';
@@ -29,6 +30,7 @@ interface AppDataContextValue {
   settlementsByGroup: Record<string, Settlement[]>;
   activitiesByGroup: Record<string, GroupActivity[]>;
   friendships: Friendship[];
+  friendRequests: FriendRequest[];
   acceptedFriendUids: string[];
   profilesMap: Record<string, PublicProfile>;
   notifications: AppNotification[];
@@ -59,6 +61,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   const [settlementsByGroup, setSettlementsByGroup] = useState<Record<string, Settlement[]>>({});
   const [activitiesByGroup, setActivitiesByGroup] = useState<Record<string, GroupActivity[]>>({});
   const [friendships, setFriendships] = useState<Friendship[]>([]);
+  const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([]);
   const [profilesMap, setProfilesMap] = useState<Record<string, PublicProfile>>({});
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loadingData, setLoadingData] = useState(true);
@@ -109,6 +112,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     if (!profile?.uid) {
       setGroups([]);
       setFriendships([]);
+      setFriendRequests([]);
       setNotifications([]);
       setExpensesByGroup({});
       setSettlementsByGroup({});
@@ -147,6 +151,14 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       onListenerError
     );
 
+    const unsubFriendRequests = subscribeFriendRequests(
+      profile.uid,
+      (list) => {
+        setFriendRequests(list);
+      },
+      onListenerError
+    );
+
     const unsubNotifs = subscribeNotifications(
       profile.uid,
       (list) => {
@@ -158,6 +170,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     return () => {
       unsubGroups();
       unsubFriends();
+      unsubFriendRequests();
       unsubNotifs();
     };
   }, [profile?.uid, syncEpoch]);
@@ -238,12 +251,15 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     };
   }, [profile?.uid, groupIdsKey, syncEpoch]);
 
-  // Load public profiles for all friends and group members
+  // Load public profiles for all friends, friend requests, and group members
   useEffect(() => {
     if (!profile?.uid) return;
     const uids = new Set<string>([profile.uid]);
     for (const f of friendships) {
       f.users.forEach((u) => uids.add(u));
+    }
+    for (const r of friendRequests) {
+      r.users.forEach((u) => uids.add(u));
     }
     for (const g of groups) {
       g.memberUids.forEach((u) => uids.add(u));
@@ -256,7 +272,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         setProfilesMap((prev) => ({ ...prev, ...loaded }));
       }
     });
-  }, [profile?.uid, friendships, groups]);
+  }, [profile?.uid, friendships, friendRequests, groups]);
 
   const refreshProfiles = useCallback(async (uids: string[], forceRefresh = false) => {
     if (forceRefresh) {
@@ -379,6 +395,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       settlementsByGroup,
       activitiesByGroup,
       friendships,
+      friendRequests,
       acceptedFriendUids,
       profilesMap,
       notifications,
@@ -398,6 +415,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       settlementsByGroup,
       activitiesByGroup,
       friendships,
+      friendRequests,
       acceptedFriendUids,
       profilesMap,
       notifications,
