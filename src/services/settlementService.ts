@@ -9,7 +9,13 @@ import {
   writeBatch,
   Unsubscribe,
 } from 'firebase/firestore';
-import { db, handleFirestoreError, logFirestoreError, OperationType } from '../lib/firebase';
+import {
+  commitBatchOfflineAware,
+  db,
+  handleFirestoreError,
+  logFirestoreError,
+  OperationType,
+} from '../lib/firebase';
 import type { Group, Settlement, SettlementMethod, UserPrivateProfile } from '../types';
 import { formatINR } from '../utils/finance';
 import { createNotification } from './notificationService';
@@ -17,7 +23,8 @@ import { createNotification } from './notificationService';
 export function subscribeGroupSettlements(
   groupId: string,
   callback: (items: Settlement[]) => void,
-  onError?: (err: Error) => void
+  onError?: (err: Error) => void,
+  onMetadata?: (hasPendingWrites: boolean) => void
 ): Unsubscribe {
   const q = query(
     collection(db, 'groups', groupId, 'settlements'),
@@ -25,7 +32,9 @@ export function subscribeGroupSettlements(
   );
   return onSnapshot(
     q,
+    { includeMetadataChanges: true },
     (snap) => {
+      if (onMetadata) onMetadata(snap.metadata.hasPendingWrites);
       callback(
         snap.docs.map((d) => ({
           id: d.id,
@@ -54,7 +63,7 @@ export async function recordSettlement(
     note?: string;
     existingSettlements: Settlement[];
   }
-): Promise<string> {
+): Promise<{ id: string; queuedOffline: boolean }> {
   if (payload.fromUid === payload.toUid) {
     throw new Error('Payer and receiver cannot be the same member.');
   }
@@ -109,28 +118,28 @@ export async function recordSettlement(
     createdAt: serverTimestamp(),
   });
 
-  try {
-    await batch.commit();
-  } catch (err) {
-    handleFirestoreError(err, OperationType.CREATE, `groups/${group.id}/settlements/${stRef.id}`);
-  }
-
   const recipientUid = me.uid === payload.fromUid ? payload.toUid : payload.fromUid;
-  await createNotification({
-    recipientUid,
-    senderUid: me.uid,
-    senderName: me.fullName,
-    type: 'settlement_recorded',
-    title: `${group.name} · Payment recorded`,
-    body:
-      me.uid === payload.fromUid
-        ? `${payload.fromName} marked ${formatINR(payload.amountPaise)} paid via ${payload.method.toUpperCase()}. Please confirm receipt.`
-        : `${me.fullName} requested ${formatINR(payload.amountPaise)} settlement in ${group.name}.`,
-    groupId: group.id,
-    link: `/groups/${group.id}`,
-  });
+  const { queuedOffline } = await commitBatchOfflineAware(
+    batch,
+    OperationType.CREATE,
+    `groups/${group.id}/settlements/${stRef.id}`,
+    () =>
+      createNotification({
+        recipientUid,
+        senderUid: me.uid,
+        senderName: me.fullName,
+        type: 'settlement_recorded',
+        title: `${group.name} · Payment recorded`,
+        body:
+          me.uid === payload.fromUid
+            ? `${payload.fromName} marked ${formatINR(payload.amountPaise)} paid via ${payload.method.toUpperCase()}. Please confirm receipt.`
+            : `${me.fullName} requested ${formatINR(payload.amountPaise)} settlement in ${group.name}.`,
+        groupId: group.id,
+        link: `/groups/${group.id}`,
+      })
+  );
 
-  return stRef.id;
+  return { id: stRef.id, queuedOffline };
 }
 
 export async function markSettlementPaid(
@@ -277,7 +286,7 @@ export async function updatePendingSettlement(
     upiTransactionRef?: string;
     note?: string;
   }
-): Promise<void> {
+): Promise<{ queuedOffline: boolean }> {
   if (settlement.status === 'confirmed') {
     throw new Error('Confirmed settlements are locked and cannot be edited.');
   }
@@ -306,23 +315,23 @@ export async function updatePendingSettlement(
     createdAt: serverTimestamp(),
   });
 
-  try {
-    await batch.commit();
-  } catch (err) {
-    handleFirestoreError(err, OperationType.UPDATE, `groups/${group.id}/settlements/${settlement.id}`);
-  }
-
   const recipientUid = me.uid === settlement.fromUid ? settlement.toUid : settlement.fromUid;
-  await createNotification({
-    recipientUid,
-    senderUid: me.uid,
-    senderName: me.fullName,
-    type: 'settlement_updated',
-    title: `${group.name} · Settlement updated`,
-    body: `${me.fullName} updated pending settlement to ${formatINR(updates.amountPaise)} (${updates.method.toUpperCase()}).`,
-    groupId: group.id,
-    link: `/groups/${group.id}`,
-  });
+  return await commitBatchOfflineAware(
+    batch,
+    OperationType.UPDATE,
+    `groups/${group.id}/settlements/${settlement.id}`,
+    () =>
+      createNotification({
+        recipientUid,
+        senderUid: me.uid,
+        senderName: me.fullName,
+        type: 'settlement_updated',
+        title: `${group.name} · Settlement updated`,
+        body: `${me.fullName} updated pending settlement to ${formatINR(updates.amountPaise)} (${updates.method.toUpperCase()}).`,
+        groupId: group.id,
+        link: `/groups/${group.id}`,
+      })
+  );
 }
 
 export async function deleteSettlement(groupId: string, settlementId: string): Promise<void> {

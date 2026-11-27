@@ -10,7 +10,13 @@ import {
   writeBatch,
   Unsubscribe,
 } from 'firebase/firestore';
-import { db, handleFirestoreError, logFirestoreError, OperationType } from '../lib/firebase';
+import {
+  commitBatchOfflineAware,
+  db,
+  handleFirestoreError,
+  logFirestoreError,
+  OperationType,
+} from '../lib/firebase';
 import type {
   CurrencyCode,
   Expense,
@@ -29,7 +35,8 @@ import { notifyGroupMembers } from './notificationService';
 export function subscribeGroupExpenses(
   groupId: string,
   callback: (expenses: Expense[]) => void,
-  onError?: (err: Error) => void
+  onError?: (err: Error) => void,
+  onMetadata?: (hasPendingWrites: boolean) => void
 ): Unsubscribe {
   const q = query(
     collection(db, 'groups', groupId, 'expenses'),
@@ -37,7 +44,9 @@ export function subscribeGroupExpenses(
   );
   return onSnapshot(
     q,
+    { includeMetadataChanges: true },
     (snap) => {
+      if (onMetadata) onMetadata(snap.metadata.hasPendingWrites);
       callback(
         snap.docs.map((d) => ({
           id: d.id,
@@ -107,7 +116,7 @@ export async function addExpense(
   me: UserPrivateProfile,
   group: Group,
   payload: ExpenseUpsertPayload
-): Promise<string> {
+): Promise<{ id: string; queuedOffline: boolean }> {
   const expRef = doc(collection(db, 'groups', group.id, 'expenses'));
   const payerUids = Array.from(new Set(payload.payers.map((p) => p.uid)));
   const participantUids = Array.from(new Set(payload.shares.map((s) => s.uid)));
@@ -159,23 +168,23 @@ export async function addExpense(
     createdAt: serverTimestamp(),
   });
 
-  try {
-    await batch.commit();
-  } catch (err) {
-    handleFirestoreError(err, OperationType.CREATE, `groups/${group.id}/expenses/${expRef.id}`);
-  }
+  const { queuedOffline } = await commitBatchOfflineAware(
+    batch,
+    OperationType.CREATE,
+    `groups/${group.id}/expenses/${expRef.id}`,
+    () =>
+      notifyGroupMembers({
+        memberUids: group.memberUids,
+        senderUid: me.uid,
+        senderName: me.fullName,
+        type: 'expense_added',
+        title: `${group.name} · New expense`,
+        body: `${me.fullName} added "${payload.title.trim()}" for ${displayOriginal}.`,
+        groupId: group.id,
+      })
+  );
 
-  await notifyGroupMembers({
-    memberUids: group.memberUids,
-    senderUid: me.uid,
-    senderName: me.fullName,
-    type: 'expense_added',
-    title: `${group.name} · New expense`,
-    body: `${me.fullName} added "${payload.title.trim()}" for ${displayOriginal}.`,
-    groupId: group.id,
-  });
-
-  return expRef.id;
+  return { id: expRef.id, queuedOffline };
 }
 
 export async function updateExpense(
@@ -183,7 +192,7 @@ export async function updateExpense(
   group: Group,
   expenseId: string,
   payload: ExpenseUpsertPayload
-): Promise<void> {
+): Promise<{ queuedOffline: boolean }> {
   const expRef = doc(db, 'groups', group.id, 'expenses', expenseId);
   const payerUids = Array.from(new Set(payload.payers.map((p) => p.uid)));
   const participantUids = Array.from(new Set(payload.shares.map((s) => s.uid)));
@@ -232,21 +241,23 @@ export async function updateExpense(
     createdAt: serverTimestamp(),
   });
 
-  try {
-    await batch.commit();
-  } catch (err) {
-    handleFirestoreError(err, OperationType.UPDATE, `groups/${group.id}/expenses/${expenseId}`);
-  }
+  const { queuedOffline } = await commitBatchOfflineAware(
+    batch,
+    OperationType.UPDATE,
+    `groups/${group.id}/expenses/${expenseId}`,
+    () =>
+      notifyGroupMembers({
+        memberUids: group.memberUids,
+        senderUid: me.uid,
+        senderName: me.fullName,
+        type: 'expense_updated',
+        title: `${group.name} · Expense updated`,
+        body: `${me.fullName} updated "${payload.title.trim()}" (${displayOriginal}).`,
+        groupId: group.id,
+      })
+  );
 
-  await notifyGroupMembers({
-    memberUids: group.memberUids,
-    senderUid: me.uid,
-    senderName: me.fullName,
-    type: 'expense_updated',
-    title: `${group.name} · Expense updated`,
-    body: `${me.fullName} updated "${payload.title.trim()}" (${displayOriginal}).`,
-    groupId: group.id,
-  });
+  return { queuedOffline };
 }
 
 export async function deleteExpense(

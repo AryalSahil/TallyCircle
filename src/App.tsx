@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ThemeProvider } from './contexts/ThemeContext';
@@ -8,15 +8,41 @@ import { CurrencyProvider } from './contexts/CurrencyContext';
 import { AppDataProvider } from './contexts/AppDataContext';
 import { AppShell } from './components/layout/AppShell';
 import { AuthPage } from './pages/AuthPage';
-import { DashboardPage } from './pages/DashboardPage';
-import { GroupsPage } from './pages/GroupsPage';
-import { GroupDetailPage } from './pages/GroupDetailPage';
-import { FriendsPage } from './pages/FriendsPage';
-import { AnalyticsPage } from './pages/AnalyticsPage';
-import { NotificationsPage } from './pages/NotificationsPage';
-import { ProfilePage } from './pages/ProfilePage';
-import { InviteJoinPage } from './pages/InviteJoinPage';
 import { ExpenseFormModal } from './components/modals/ExpenseFormModal';
+
+const DashboardPage = lazy(() =>
+  import('./pages/DashboardPage').then((m) => ({ default: m.DashboardPage }))
+);
+const GroupsPage = lazy(() =>
+  import('./pages/GroupsPage').then((m) => ({ default: m.GroupsPage }))
+);
+const GroupDetailPage = lazy(() =>
+  import('./pages/GroupDetailPage').then((m) => ({ default: m.GroupDetailPage }))
+);
+const FriendsPage = lazy(() =>
+  import('./pages/FriendsPage').then((m) => ({ default: m.FriendsPage }))
+);
+const AnalyticsPage = lazy(() =>
+  import('./pages/AnalyticsPage').then((m) => ({ default: m.AnalyticsPage }))
+);
+const NotificationsPage = lazy(() =>
+  import('./pages/NotificationsPage').then((m) => ({ default: m.NotificationsPage }))
+);
+const ProfilePage = lazy(() =>
+  import('./pages/ProfilePage').then((m) => ({ default: m.ProfilePage }))
+);
+const InviteJoinPage = lazy(() =>
+  import('./pages/InviteJoinPage').then((m) => ({ default: m.InviteJoinPage }))
+);
+
+function RouteLoadingFallback() {
+  return (
+    <div className="py-16 flex flex-col items-center justify-center gap-3 text-center">
+      <div className="w-7 h-7 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+      <p className="text-xs text-slate-500 dark:text-slate-400">Loading view...</p>
+    </div>
+  );
+}
 
 const PENDING_INVITE_KEY = 'tallycircle_pending_invite_path';
 
@@ -70,7 +96,7 @@ function AuthenticatedRouter() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+      <div className="min-h-[100dvh] flex items-center justify-center bg-slate-50 dark:bg-slate-950">
         <div className="space-y-3 text-center">
           <div className="w-8 h-8 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin mx-auto" />
           <p className="text-sm text-slate-500 dark:text-slate-400">Loading your ledger...</p>
@@ -94,20 +120,22 @@ function AuthenticatedRouter() {
 
   return (
     <AppDataProvider>
-      <Routes>
-        <Route element={<AppShell onQuickAddExpense={() => openQuickExpense()} />}>
-          <Route path="/" element={<DashboardPage onAddExpense={openQuickExpense} />} />
-          <Route path="/groups" element={<GroupsPage />} />
-          <Route path="/groups/:groupId" element={<GroupDetailPage />} />
-          <Route path="/friends" element={<FriendsPage />} />
-          <Route path="/analytics" element={<AnalyticsPage />} />
-          <Route path="/notifications" element={<NotificationsPage />} />
-          <Route path="/profile" element={<ProfilePage />} />
-          <Route path="/join/group/:token" element={<InviteJoinPage kind="group" />} />
-          <Route path="/join/friend/:token" element={<InviteJoinPage kind="friend" />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
-      </Routes>
+      <Suspense fallback={<RouteLoadingFallback />}>
+        <Routes>
+          <Route element={<AppShell onQuickAddExpense={() => openQuickExpense()} />}>
+            <Route path="/" element={<DashboardPage onAddExpense={openQuickExpense} />} />
+            <Route path="/groups" element={<GroupsPage />} />
+            <Route path="/groups/:groupId" element={<GroupDetailPage />} />
+            <Route path="/friends" element={<FriendsPage />} />
+            <Route path="/analytics" element={<AnalyticsPage />} />
+            <Route path="/notifications" element={<NotificationsPage />} />
+            <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/join/group/:token" element={<InviteJoinPage kind="group" />} />
+            <Route path="/join/friend/:token" element={<InviteJoinPage kind="friend" />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
+        </Routes>
+      </Suspense>
 
       <ExpenseFormModal
         open={quickExpenseOpen}

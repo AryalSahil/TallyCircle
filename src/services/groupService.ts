@@ -46,7 +46,8 @@ async function getFreshDoc(ref: ReturnType<typeof doc>) {
 export function subscribeGroups(
   uid: string,
   callback: (groups: Group[]) => void,
-  onError?: (err: Error) => void
+  onError?: (err: Error) => void,
+  onMetadata?: (hasPendingWrites: boolean) => void
 ): Unsubscribe {
   const q = query(
     collection(db, 'groups'),
@@ -54,7 +55,9 @@ export function subscribeGroups(
   );
   return onSnapshot(
     q,
+    { includeMetadataChanges: true },
     (snap) => {
+      if (onMetadata) onMetadata(snap.metadata.hasPendingWrites);
       const list = snap.docs
         .map((d) => ({
           id: d.id,

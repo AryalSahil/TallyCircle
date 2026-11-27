@@ -18,7 +18,8 @@ import { formatINR } from '../utils/finance';
 export function subscribeNotifications(
   uid: string,
   callback: (items: AppNotification[]) => void,
-  onError?: (err: Error) => void
+  onError?: (err: Error) => void,
+  onMetadata?: (hasPendingWrites: boolean) => void
 ): Unsubscribe {
   const q = query(
     collection(db, 'notifications'),
@@ -27,7 +28,9 @@ export function subscribeNotifications(
 
   return onSnapshot(
     q,
+    { includeMetadataChanges: true },
     (snapshot) => {
+      if (onMetadata) onMetadata(snapshot.metadata.hasPendingWrites);
       const items = snapshot.docs
         .map((d) => ({
           id: d.id,

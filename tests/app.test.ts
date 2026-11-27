@@ -312,3 +312,48 @@ describe('Backend Express API Endpoints', () => {
     }
   });
 });
+
+describe('PWA Assets, Icon Dimensions & Vercel Configuration', () => {
+  function readPngDimensions(filePath: string): { width: number; height: number } {
+    const buf = fs.readFileSync(filePath);
+    const pngSig = '89504e470d0a1a0a';
+    assert.equal(buf.subarray(0, 8).toString('hex'), pngSig, `${path.basename(filePath)} must be a valid PNG`);
+    const width = buf.readUInt32BE(16);
+    const height = buf.readUInt32BE(20);
+    return { width, height };
+  }
+
+  it('includes valid 192x192, 512x512, maskable 512x512, and 180x180 apple-touch icons plus offline.html and icon.svg', () => {
+    const publicDir = path.resolve(process.cwd(), 'public');
+    assert.deepEqual(readPngDimensions(path.join(publicDir, 'pwa-192x192.png')), { width: 192, height: 192 });
+    assert.deepEqual(readPngDimensions(path.join(publicDir, 'pwa-512x512.png')), { width: 512, height: 512 });
+    assert.deepEqual(readPngDimensions(path.join(publicDir, 'pwa-maskable-512x512.png')), { width: 512, height: 512 });
+    assert.deepEqual(readPngDimensions(path.join(publicDir, 'apple-touch-icon.png')), { width: 180, height: 180 });
+    assert.equal(fs.existsSync(path.join(publicDir, 'icon.svg')), true);
+    assert.equal(fs.existsSync(path.join(publicDir, 'favicon.ico')), true);
+
+    const offlineHtml = fs.readFileSync(path.join(publicDir, 'offline.html'), 'utf8');
+    assert.ok(offlineHtml.includes("You're currently offline"));
+  });
+
+  it('configures vercel.json with service worker no-cache headers, manifest MIME type, and safe SPA rewrites', () => {
+    const vercelPath = path.resolve(process.cwd(), 'vercel.json');
+    const vercel = JSON.parse(fs.readFileSync(vercelPath, 'utf8')) as {
+      headers: Array<{ source: string; headers: Array<{ key: string; value: string }> }>;
+      rewrites: Array<{ source: string; destination: string }>;
+    };
+    assert.ok(Array.isArray(vercel.headers) && vercel.headers.length >= 2);
+    const swHeader = vercel.headers.find((h) => h.source === '/sw.js');
+    assert.ok(swHeader, 'vercel.json must configure headers for /sw.js');
+    assert.ok(
+      swHeader.headers.some((x) => x.key.toLowerCase() === 'cache-control' && x.value.includes('must-revalidate'))
+    );
+    const manifestHeader = vercel.headers.find((h) => h.source === '/manifest.webmanifest');
+    assert.ok(manifestHeader, 'vercel.json must configure headers for /manifest.webmanifest');
+    assert.ok(
+      manifestHeader.headers.some((x) => x.key.toLowerCase() === 'content-type' && x.value.includes('application/manifest+json'))
+    );
+    assert.ok(vercel.rewrites.some((r) => r.destination === '/index.html' && r.source.includes('manifest\\.webmanifest')));
+  });
+});
+

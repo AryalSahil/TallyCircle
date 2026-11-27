@@ -713,8 +713,27 @@ export async function createServerApp(options: { withVite?: boolean } = {}) {
     } else {
       const distPath = path.resolve(__dirname, 'dist');
       if (fs.existsSync(distPath)) {
-        app.use(express.static(distPath));
-        app.get('*', (_req, res) => {
+        app.use(
+          express.static(distPath, {
+            setHeaders: (res, filePath) => {
+              if (filePath.endsWith(`${path.sep}sw.js`) || filePath.endsWith('/sw.js')) {
+                res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+                res.setHeader('Service-Worker-Allowed', '/');
+              } else if (
+                filePath.endsWith(`${path.sep}manifest.webmanifest`) ||
+                filePath.endsWith('/manifest.webmanifest')
+              ) {
+                res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+                res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+              }
+            },
+          })
+        );
+        app.get('*', (req, res) => {
+          if (req.path.startsWith('/api/')) {
+            res.status(404).json({ error: 'API endpoint not found' });
+            return;
+          }
           res.sendFile(path.join(distPath, 'index.html'));
         });
       }

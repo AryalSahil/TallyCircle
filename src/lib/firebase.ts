@@ -13,6 +13,7 @@ import {
   doc,
   getDocFromServer,
   type Firestore,
+  type WriteBatch,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -115,6 +116,49 @@ export function handleFirestoreError(
 ): never {
   const errInfo = logFirestoreError(error, operationType, path);
   throw new Error(JSON.stringify(errInfo));
+}
+
+export async function commitBatchOfflineAware(
+  batch: WriteBatch,
+  operationType: OperationType,
+  path: string | null,
+  onAfterCommit?: () => Promise<void>
+): Promise<{ queuedOffline: boolean }> {
+  const commitPromise = batch.commit();
+
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    commitPromise
+      .then(() => {
+        if (onAfterCommit) {
+          return onAfterCommit().catch(() => {});
+        }
+      })
+      .catch((err) => {
+        const info = logFirestoreError(err, operationType, path);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('tallycircle:sync-error', {
+              detail: {
+                message: `Queued offline change failed to sync: ${info.error}`,
+              },
+            })
+          );
+        }
+      });
+    return { queuedOffline: true };
+  }
+
+  try {
+    await commitPromise;
+  } catch (err) {
+    handleFirestoreError(err, operationType, path);
+  }
+
+  if (onAfterCommit) {
+    await onAfterCommit();
+  }
+
+  return { queuedOffline: false };
 }
 
 let connectionChecked = false;

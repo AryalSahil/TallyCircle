@@ -322,6 +322,10 @@ export function ExpenseFormModal({
   };
 
   const handleSmartScan = async () => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      showToast('Smart scan requires an internet connection', { variant: 'error' });
+      return;
+    }
     if (!quickPrompt.trim() && !receiptImage) {
       showToast('Enter a note or attach a receipt first', { variant: 'info' });
       return;
@@ -423,11 +427,30 @@ export function ExpenseFormModal({
       };
 
       if (editingExpense) {
-        await updateExpense(profile, selectedGroup, editingExpense.id, payload);
-        showToast('Expense updated', { variant: 'success' });
+        const { queuedOffline } = await updateExpense(
+          profile,
+          selectedGroup,
+          editingExpense.id,
+          payload
+        );
+        if (queuedOffline) {
+          showToast('Saved offline — queued for sync', {
+            description: 'Changes are stored locally and will sync automatically when you reconnect.',
+            variant: 'info',
+          });
+        } else {
+          showToast('Expense updated', { variant: 'success' });
+        }
       } else {
-        await addExpense(profile, selectedGroup, payload);
-        showToast('Expense added', { variant: 'success' });
+        const { queuedOffline } = await addExpense(profile, selectedGroup, payload);
+        if (queuedOffline) {
+          showToast('Saved offline — queued for sync', {
+            description: 'Expense stored locally and will sync automatically when you reconnect.',
+            variant: 'info',
+          });
+        } else {
+          showToast('Expense added', { variant: 'success' });
+        }
       }
 
       // Persist any brand-new custom tags to user's tag library

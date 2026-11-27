@@ -103,15 +103,27 @@ export function SettlementModal({
     setSubmitting(true);
     try {
       if (editingSettlement) {
-        await updatePendingSettlement(profile, group, editingSettlement, {
-          amountPaise,
-          method,
-          upiTransactionRef: upiRef,
-          note,
-        });
-        showToast('Pending settlement updated', { variant: 'success' });
+        const { queuedOffline } = await updatePendingSettlement(
+          profile,
+          group,
+          editingSettlement,
+          {
+            amountPaise,
+            method,
+            upiTransactionRef: upiRef,
+            note,
+          }
+        );
+        if (queuedOffline) {
+          showToast('Saved offline — queued for sync', {
+            description: 'Changes are stored locally and will sync automatically when you reconnect.',
+            variant: 'info',
+          });
+        } else {
+          showToast('Pending settlement updated', { variant: 'success' });
+        }
       } else {
-        await recordSettlement(profile, group, {
+        const { queuedOffline } = await recordSettlement(profile, group, {
           fromUid,
           fromName: group.memberNames[fromUid] || 'Member',
           toUid,
@@ -122,13 +134,20 @@ export function SettlementModal({
           note,
           existingSettlements,
         });
-        showToast('Settlement recorded', {
-          description:
-            profile.uid === fromUid
-              ? 'Sent for receiver confirmation.'
-              : 'Added to pending settlements.',
-          variant: 'success',
-        });
+        if (queuedOffline) {
+          showToast('Saved offline — queued for sync', {
+            description: 'Settlement is stored locally and will sync automatically when you reconnect.',
+            variant: 'info',
+          });
+        } else {
+          showToast('Settlement recorded', {
+            description:
+              profile.uid === fromUid
+                ? 'Sent for receiver confirmation.'
+                : 'Added to pending settlements.',
+            variant: 'success',
+          });
+        }
       }
       onClose();
     } catch (err: unknown) {

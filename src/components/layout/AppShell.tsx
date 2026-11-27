@@ -26,6 +26,7 @@ import { useAppData } from '../../contexts/AppDataContext';
 import { CURRENCY_CODES, CurrencyCode, SUPPORTED_CURRENCIES } from '../../types';
 import { Avatar, Button } from '../ui/Primitives';
 import { GlobalSearchModal } from '../GlobalSearchModal';
+import { PWAUpdateBanner } from '../PWAUpdateBanner';
 
 const NAV_ITEMS = [
   { to: '/', label: 'Overview', icon: LayoutDashboard },
@@ -43,6 +44,7 @@ export function AppShell({ onQuickAddExpense }: { onQuickAddExpense: () => void 
     unreadNotificationsCount,
     activeGroups,
     syncStatus,
+    hasPendingWrites,
     lastSyncError,
     retrySync,
   } = useAppData();
@@ -214,7 +216,7 @@ export function AppShell({ onQuickAddExpense }: { onQuickAddExpense: () => void 
             className="fixed inset-0 bg-slate-950/60 backdrop-blur-[2px]"
             onClick={() => setMobileMenuOpen(false)}
           />
-          <aside className="relative z-10 w-[82vw] max-w-xs h-full bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col shadow-2xl">
+          <aside className="relative z-10 w-[82vw] max-w-xs h-full bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col shadow-2xl pt-safe">
             <div className="h-14 px-4 flex items-center justify-between border-b border-slate-200 dark:border-slate-800 shrink-0">
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-lg bg-emerald-600 dark:bg-emerald-500 flex items-center justify-center text-white dark:text-slate-950 shrink-0">
@@ -299,7 +301,8 @@ export function AppShell({ onQuickAddExpense }: { onQuickAddExpense: () => void 
       {/* Main Content Area */}
       <div className="flex-1 lg:pl-64 flex flex-col min-w-0 pb-[calc(4.5rem+env(safe-area-inset-bottom))] lg:pb-0">
         {/* Top Header */}
-        <header className="sticky top-0 z-30 h-14 sm:h-16 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm px-3 sm:px-6 flex items-center justify-between gap-2 sm:gap-3">
+        <header className="sticky top-0 z-30 pt-safe border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm">
+          <div className="h-14 sm:h-16 px-3 sm:px-6 flex items-center justify-between gap-2 sm:gap-3">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
               type="button"
@@ -320,9 +323,13 @@ export function AppShell({ onQuickAddExpense }: { onQuickAddExpense: () => void 
                 syncStatus === 'online'
                   ? 'Real-time database connected'
                   : syncStatus === 'syncing'
-                    ? 'Syncing updates...'
+                    ? hasPendingWrites
+                      ? 'Syncing local offline changes to server...'
+                      : 'Syncing updates...'
                     : syncStatus === 'offline'
-                      ? 'Offline mode — changes queue locally'
+                      ? hasPendingWrites
+                        ? 'Offline mode — local changes are queued for sync'
+                        : 'Offline mode — showing cached data'
                       : lastSyncError || 'Sync interrupted'
               }
               className="hidden sm:inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400 shrink-0"
@@ -342,9 +349,13 @@ export function AppShell({ onQuickAddExpense }: { onQuickAddExpense: () => void 
                 {syncStatus === 'online'
                   ? 'Live'
                   : syncStatus === 'syncing'
-                    ? 'Syncing'
+                    ? hasPendingWrites
+                      ? 'Syncing queue'
+                      : 'Syncing'
                     : syncStatus === 'offline'
-                      ? 'Offline'
+                      ? hasPendingWrites
+                        ? 'Offline · Queued'
+                        : 'Offline'
                       : 'Sync issue'}
               </span>
             </span>
@@ -401,41 +412,54 @@ export function AppShell({ onQuickAddExpense }: { onQuickAddExpense: () => void 
               <span className="sm:hidden">Add</span>
             </Button>
           </div>
+          </div>
         </header>
 
         <GlobalSearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
 
-        {(syncStatus === 'offline' || syncStatus === 'error') && (
+        <PWAUpdateBanner />
+
+        {(syncStatus === 'offline' || syncStatus === 'error' || (syncStatus === 'syncing' && hasPendingWrites)) && (
           <div className="max-w-[1200px] w-full mx-auto px-3.5 sm:px-6 pt-3">
             <div
               role="alert"
               className={`rounded-lg border px-3.5 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs ${
                 syncStatus === 'error'
                   ? 'border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300'
-                  : 'border-amber-200 dark:border-amber-900/60 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300'
+                  : syncStatus === 'syncing'
+                    ? 'border-emerald-200 dark:border-emerald-900/60 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300'
+                    : 'border-amber-200 dark:border-amber-900/60 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300'
               }`}
             >
               <span className="flex items-center gap-2 min-w-0">
                 {syncStatus === 'error' ? (
                   <AlertTriangle className="w-4 h-4 shrink-0" />
+                ) : syncStatus === 'syncing' ? (
+                  <RotateCcw className="w-4 h-4 shrink-0 animate-spin" />
                 ) : (
                   <WifiOff className="w-4 h-4 shrink-0" />
                 )}
-                <span className="truncate">
+                <span className="break-words">
                   {syncStatus === 'offline'
-                    ? 'You are offline. Cached data is shown and edits will sync when reconnected.'
-                    : lastSyncError || 'Real-time sync encountered an error.'}
+                    ? hasPendingWrites
+                      ? 'You are offline. Local changes are queued and will sync automatically when reconnected.'
+                      : 'You are offline. Showing cached data — reconnect to sync live updates.'
+                    : syncStatus === 'syncing'
+                      ? 'Connection restored — syncing queued offline changes...'
+                      : lastSyncError || 'Real-time sync encountered an error.'}
                 </span>
               </span>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={retrySync}
-                className="w-full sm:w-auto shrink-0"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                Retry Sync
-              </Button>
+              {syncStatus !== 'syncing' && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={retrySync}
+                  className="w-full sm:w-auto shrink-0"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Retry Sync
+                </Button>
+              )}
             </div>
           </div>
         )}

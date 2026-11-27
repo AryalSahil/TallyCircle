@@ -9,9 +9,11 @@ import {
   Copy,
   Check,
   UserPlus,
+  WifiOff,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { AUTH_EDITORIAL_IMAGE } from '../utils/helpers';
 import { Button, InputField } from '../components/ui/Primitives';
 
@@ -125,6 +127,7 @@ export function AuthPage() {
     logout,
   } = useAuth();
   const { showToast } = useToast();
+  const isOnline = useOnlineStatus();
 
   const [mode, setMode] = useState<AuthMode>('signin');
   const [fullName, setFullName] = useState('');
@@ -174,6 +177,13 @@ export function AuthPage() {
   };
 
   const handleGoogle = async () => {
+    if (!isOnline) {
+      showToast('You are offline', {
+        description: 'Connect to the internet to sign in with Google.',
+        variant: 'error',
+      });
+      return;
+    }
     setAuthAlert(null);
     setGoogleLoading(true);
     try {
@@ -192,6 +202,13 @@ export function AuthPage() {
 
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isOnline) {
+      showToast('You are offline', {
+        description: 'Connect to the internet to sign in or manage your account.',
+        variant: 'error',
+      });
+      return;
+    }
     setAuthAlert(null);
     setLoading(true);
     try {
@@ -323,6 +340,18 @@ export function AuthPage() {
               Split group bills with paise precision, simplify debts, and track UPI or cash settlements.
             </p>
           </div>
+
+          {!isOnline && (
+            <div
+              role="alert"
+              className="rounded-xl border border-amber-200 dark:border-amber-900/60 bg-amber-50/80 dark:bg-amber-950/30 p-3.5 flex items-start gap-2.5 text-xs text-amber-900 dark:text-amber-200"
+            >
+              <WifiOff className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+              <p className="leading-relaxed">
+                You are currently offline. Connect to the internet to sign in, verify your account, or create a new profile.
+              </p>
+            </div>
+          )}
 
           {pendingInviteKind && (
             <div className="rounded-xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/80 dark:bg-emerald-950/30 p-3.5 flex items-start gap-2.5">

@@ -37,6 +37,7 @@ interface AppDataContextValue {
   unreadNotificationsCount: number;
   loadingData: boolean;
   syncStatus: SyncStatus;
+  hasPendingWrites: boolean;
   lastSyncError: string | null;
   retrySync: () => void;
   summary: {
@@ -70,8 +71,21 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
   const [snapshotsSynced, setSnapshotsSynced] = useState(true);
+  const [pendingWritesMap, setPendingWritesMap] = useState<Record<string, boolean>>({});
   const [lastSyncError, setLastSyncError] = useState<string | null>(null);
   const [syncEpoch, setSyncEpoch] = useState(0);
+
+  const setPendingKey = useCallback((key: string, pending: boolean) => {
+    setPendingWritesMap((prev) => {
+      if (Boolean(prev[key]) === pending) return prev;
+      if (!pending) {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      }
+      return { ...prev, [key]: true };
+    });
+  }, []);
 
   const retrySync = useCallback(() => {
     setLastSyncError(null);
@@ -79,7 +93,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     setSyncEpoch((e) => e + 1);
   }, []);
 
-  // Monitor browser online/offline state and auto-clear error when reconnected
+  // Monitor browser online/offline state and delayed offline-sync errors
   useEffect(() => {
     const onOnline = () => {
       setIsOnline(true);
@@ -89,11 +103,19 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     const onOffline = () => {
       setIsOnline(false);
     };
+    const onSyncError = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ message?: string }>).detail;
+      if (detail?.message) {
+        setLastSyncError(detail.message);
+      }
+    };
     window.addEventListener('online', onOnline);
     window.addEventListener('offline', onOffline);
+    window.addEventListener('tallycircle:sync-error', onSyncError);
     return () => {
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);
+      window.removeEventListener('tallycircle:sync-error', onSyncError);
     };
   }, []);
 
@@ -140,7 +162,8 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         groupsReady = true;
         markReady();
       },
-      onListenerError
+      onListenerError,
+      (pending) => setPendingKey('groups', pending)
     );
 
     const unsubFriends = subscribeFriendships(
@@ -164,7 +187,8 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       (list) => {
         setNotifications(list);
       },
-      onListenerError
+      onListenerError,
+      (pending) => setPendingKey('notifications', pending)
     );
 
     return () => {
@@ -173,7 +197,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       unsubFriendRequests();
       unsubNotifs();
     };
-  }, [profile?.uid, syncEpoch]);
+  }, [profile?.uid, syncEpoch, setPendingKey]);
 
   const groupIdsKey = useMemo(() => groups.map((g) => g.id).join(','), [groups]);
 
@@ -223,7 +247,8 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
           (items) => {
             setExpensesByGroup((prev) => ({ ...prev, [g.id]: items }));
           },
-          onGroupError
+          onGroupError,
+          (pending) => setPendingKey(`expenses:${g.id}`, pending)
         )
       );
       unsubs.push(
@@ -232,7 +257,8 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
           (items) => {
             setSettlementsByGroup((prev) => ({ ...prev, [g.id]: items }));
           },
-          onGroupError
+          onGroupError,
+          (pending) => setPendingKey(`settlements:${g.id}`, pending)
         )
       );
       unsubs.push(
@@ -249,7 +275,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     return () => {
       unsubs.forEach((u) => u());
     };
-  }, [profile?.uid, groupIdsKey, syncEpoch]);
+  }, [profile?.uid, groupIdsKey, syncEpoch, setPendingKey]);
 
   // Load public profiles for all friends, friend requests, and group members
   useEffect(() => {
@@ -293,12 +319,17 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     setProfilesMap((prev) => ({ ...prev, ...loaded }));
   }, []);
 
+  const hasPendingWrites = useMemo(
+    () => Object.values(pendingWritesMap).some(Boolean),
+    [pendingWritesMap]
+  );
+
   const syncStatus: SyncStatus = useMemo(() => {
     if (!isOnline) return 'offline';
     if (lastSyncError) return 'error';
-    if (!snapshotsSynced || loadingData) return 'syncing';
+    if (!snapshotsSynced || loadingData || hasPendingWrites) return 'syncing';
     return 'online';
-  }, [isOnline, lastSyncError, snapshotsSynced, loadingData]);
+  }, [isOnline, lastSyncError, snapshotsSynced, loadingData, hasPendingWrites]);
 
   const activeGroups = useMemo(() => groups.filter((g) => !g.isArchived), [groups]);
   const archivedGroups = useMemo(() => groups.filter((g) => g.isArchived), [groups]);
@@ -402,6 +433,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       unreadNotificationsCount,
       loadingData,
       syncStatus,
+      hasPendingWrites,
       lastSyncError,
       retrySync,
       summary,
@@ -422,6 +454,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       unreadNotificationsCount,
       loadingData,
       syncStatus,
+      hasPendingWrites,
       lastSyncError,
       retrySync,
       summary,

@@ -9,6 +9,8 @@ import { CURRENCY_CODES, CurrencyCode, SUPPORTED_CURRENCIES, ThemePreference } f
 import { normalizeExpenseTag } from '../utils/finance';
 import { compressImageFile } from '../utils/helpers';
 import { Avatar, Button, Card, InputField } from '../components/ui/Primitives';
+import { PWAInstallCard } from '../components/PWAInstallCard';
+import { usePWAInstall } from '../hooks/usePWAInstall';
 
 export function ProfilePage() {
   const { profile, updateMyProfile, logout } = useAuth();
@@ -16,6 +18,7 @@ export function ProfilePage() {
   const { theme, setTheme } = useTheme();
   const { baseCurrency, setBaseCurrency } = useCurrency();
   const { showToast } = useToast();
+  const { isStandalone } = usePWAInstall();
 
   const [fullName, setFullName] = useState('');
   const [handle, setHandle] = useState('');
@@ -293,6 +296,8 @@ export function ProfilePage() {
         </div>
       </Card>
 
+      <PWAInstallCard />
+
       <Card className="p-4 sm:p-6 space-y-4">
         <div>
           <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Appearance</h3>
@@ -319,9 +324,16 @@ export function ProfilePage() {
         </div>
 
         <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
-          <span className="text-xs text-slate-500 dark:text-slate-400 truncate">
-            Signed in as {profile.email}
-          </span>
+          <div className="min-w-0">
+            <span className="text-xs text-slate-500 dark:text-slate-400 truncate block">
+              Signed in as {profile.email}
+            </span>
+            {isStandalone && (
+              <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium block mt-0.5">
+                Running as installed app
+              </span>
+            )}
+          </div>
           <Button variant="outline" size="sm" onClick={logout} className="w-full sm:w-auto">
             <LogOut className="w-4 h-4" />
             Sign Out
