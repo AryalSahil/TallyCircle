@@ -224,7 +224,7 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
                         size="sm"
                         variant="outline"
                         onClick={() =>
-                          navigate(st.kind === 'trip' ? `/trips/${st.groupId}` : `/groups/${st.groupId}`)
+                          navigate(st.kind === 'trip' ? `/app/trips/${st.groupId}` : `/app/groups/${st.groupId}`)
                         }
                       >
                         View
@@ -249,7 +249,7 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
               </h3>
               <button
                 type="button"
-                onClick={() => navigate('/groups')}
+                onClick={() => navigate('/app/groups')}
                 className="text-xs font-medium text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer"
               >
                 All groups
@@ -288,8 +288,8 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
                       onClick={() =>
                         navigate(
                           exp.kind === 'trip' || exp.tripId
-                            ? `/trips/${exp.tripId || exp.groupId}`
-                            : `/groups/${exp.groupId}`
+                            ? `/app/trips/${exp.tripId || exp.groupId}`
+                            : `/app/groups/${exp.groupId}`
                         )
                       }
                       className="w-full text-left px-4 sm:px-5 py-3.5 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors flex items-center justify-between gap-3 cursor-pointer"
@@ -356,7 +356,7 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
                     <button
                       key={g.id}
                       type="button"
-                      onClick={() => navigate(`/groups/${g.id}`)}
+                      onClick={() => navigate(`/app/groups/${g.id}`)}
                       className="w-full text-left px-5 py-3.5 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors flex items-center justify-between gap-4 cursor-pointer"
                     >
                       <div className="min-w-0">
@@ -385,7 +385,7 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
                 </h3>
                 <button
                   type="button"
-                  onClick={() => navigate('/trips')}
+                  onClick={() => navigate('/app/trips')}
                   className="text-xs font-medium text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer"
                 >
                   All trips
@@ -399,7 +399,7 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
                     <button
                       key={t.id}
                       type="button"
-                      onClick={() => navigate(`/trips/${t.id}`)}
+                      onClick={() => navigate(`/app/trips/${t.id}`)}
                       className="w-full text-left px-5 py-3.5 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors flex items-center justify-between gap-4 cursor-pointer"
                     >
                       <div className="min-w-0">
@@ -439,7 +439,7 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
                   key={act.id}
                   type="button"
                   onClick={() =>
-                    navigate(act.kind === 'trip' ? `/trips/${act.groupId}` : `/groups/${act.groupId}`)
+                    navigate(act.kind === 'trip' ? `/app/trips/${act.groupId}` : `/app/groups/${act.groupId}`)
                   }
                   className="w-full text-left px-5 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors cursor-pointer"
                 >
@@ -459,13 +459,13 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
       <GroupModal
         open={createGroupOpen}
         onClose={() => setCreateGroupOpen(false)}
-        onCreated={(id) => navigate(`/groups/${id}`)}
+        onCreated={(id) => navigate(`/app/groups/${id}`)}
       />
 
       <TripModal
         open={createTripOpen}
         onClose={() => setCreateTripOpen(false)}
-        onCreated={(id) => navigate(`/trips/${id}`)}
+        onCreated={(id) => navigate(`/app/trips/${id}`)}
       />
 
       {settleTargetGroup && (

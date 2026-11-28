@@ -189,7 +189,7 @@ export function GlobalSearchModal({
                     ? expense.currency
                     : 'INR';
                   const origMinor = expense.originalAmountMinor || expense.amountPaise;
-                  const targetPath = trip ? `/trips/${trip.id}` : `/groups/${group!.id}`;
+                  const targetPath = trip ? `/app/trips/${trip.id}` : `/app/groups/${group!.id}`;
                   return (
                     <div
                       key={`${trip ? `trip_${trip.id}` : `grp_${group?.id}`}_${expense.id}`}

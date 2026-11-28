@@ -374,6 +374,22 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["recipientUid", "senderUid", "senderName", "type", "title", "body", "isRead", "createdAt"]
+    },
+    "ContactMessage": {
+      "title": "ContactMessage",
+      "description": "Public contact form inquiry submitted by visitors or signed-in users, protected against unauthorized client reads.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "email": { "type": "string", "minLength": 5, "maxLength": 120 },
+        "subject": { "type": "string", "minLength": 3, "maxLength": 120 },
+        "message": { "type": "string", "minLength": 10, "maxLength": 2000 },
+        "status": { "type": "string", "enum": ["new", "reviewed", "resolved"] },
+        "sourcePath": { "type": "string", "maxLength": 40 },
+        "submitterUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "email", "subject", "message", "status", "sourcePath", "createdAt"]
     }
   },
   "firestore": {
@@ -468,6 +484,10 @@
     "/notifications/{notificationId}": {
       "schema": { "$ref": "#/entities/Notification" },
       "description": "User-scoped notifications."
+    },
+    "/contactMessages/{messageId}": {
+      "schema": { "$ref": "#/entities/ContactMessage" },
+      "description": "Write-only public contact form submissions secured from unauthorized reads."
     }
   }
 }

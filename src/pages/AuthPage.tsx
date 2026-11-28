@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   ReceiptIndianRupee,
   Mail,
+  ArrowLeft,
   ArrowRight,
   RefreshCw,
   CheckCircle2,
@@ -112,7 +114,7 @@ function parseAuthError(err: unknown, currentHost: string): ParsedAuthError {
   };
 }
 
-export function AuthPage() {
+export function AuthPage({ initialMode = 'signin' }: { initialMode?: 'signin' | 'signup' }) {
   const {
     signInWithGoogle,
     signInWithEmail,
@@ -129,7 +131,7 @@ export function AuthPage() {
   const { showToast } = useToast();
   const isOnline = useOnlineStatus();
 
-  const [mode, setMode] = useState<AuthMode>('signin');
+  const [mode, setMode] = useState<AuthMode>(initialMode);
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -138,6 +140,11 @@ export function AuthPage() {
   const [resetSent, setResetSent] = useState(false);
   const [authAlert, setAuthAlert] = useState<ParsedAuthError | null>(null);
   const [copiedHost, setCopiedHost] = useState(false);
+
+  useEffect(() => {
+    setMode(initialMode);
+    setAuthAlert(null);
+  }, [initialMode]);
 
   const currentHost =
     typeof window !== 'undefined' ? window.location.hostname : '';
@@ -151,9 +158,13 @@ export function AuthPage() {
     } catch {
       storedPath = '';
     }
-    const effectivePath = currentPath.startsWith('/join/') ? currentPath : storedPath;
-    if (effectivePath.startsWith('/join/group/')) return 'group' as const;
-    if (effectivePath.startsWith('/join/friend/')) return 'friend' as const;
+    const effectivePath =
+      currentPath.startsWith('/join/') || currentPath.startsWith('/app/join/')
+        ? currentPath
+        : storedPath;
+    if (effectivePath.includes('/join/group/')) return 'group' as const;
+    if (effectivePath.includes('/join/trip/')) return 'trip' as const;
+    if (effectivePath.includes('/join/friend/')) return 'friend' as const;
     return null;
   })();
 
@@ -319,13 +330,22 @@ export function AuthPage() {
     <div className="min-h-[100dvh] grid grid-cols-1 lg:grid-cols-2 bg-slate-50 dark:bg-slate-950">
       <div className="flex items-center justify-center px-4 py-8 sm:p-10">
         <div className="w-full max-w-md space-y-5 sm:space-y-6">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-lg bg-emerald-600 dark:bg-emerald-500 flex items-center justify-center text-white dark:text-slate-950 shrink-0">
-              <ReceiptIndianRupee className="w-5 h-5" />
-            </div>
-            <span className="font-display text-xl font-bold text-slate-900 dark:text-white">
-              TallyCircle
-            </span>
+          <div className="flex items-center justify-between gap-3">
+            <Link to="/" className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-lg bg-emerald-600 dark:bg-emerald-500 flex items-center justify-center text-white dark:text-slate-950 shrink-0">
+                <ReceiptIndianRupee className="w-5 h-5" />
+              </div>
+              <span className="font-display text-xl font-bold text-slate-900 dark:text-white">
+                TallyCircle
+              </span>
+            </Link>
+            <Link
+              to="/"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              Back to site
+            </Link>
           </div>
 
           <div>

@@ -61,7 +61,7 @@ export function TripsPage() {
       );
       setJoinOpen(false);
       setInviteInput('');
-      navigate(`/trips/${res.tripId}`);
+      navigate(`/app/trips/${res.tripId}`);
     } catch (err: unknown) {
       showToast('Could not join trip', {
         description: err instanceof Error ? err.message : 'Invalid or expired trip link.',
@@ -155,7 +155,7 @@ export function TripsPage() {
               >
                 <button
                   type="button"
-                  onClick={() => navigate(`/trips/${trip.id}`)}
+                  onClick={() => navigate(`/app/trips/${trip.id}`)}
                   className="text-left flex-1 flex flex-col cursor-pointer"
                 >
                   <div className="aspect-[16/9] w-full bg-slate-100 dark:bg-slate-800 relative overflow-hidden">
@@ -265,7 +265,7 @@ export function TripsPage() {
       <TripModal
         open={createOpen}
         onClose={() => setCreateOpen(false)}
-        onCreated={(id) => navigate(`/trips/${id}`)}
+        onCreated={(id) => navigate(`/app/trips/${id}`)}
       />
 
       <Modal

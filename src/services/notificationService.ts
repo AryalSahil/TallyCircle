@@ -99,7 +99,7 @@ export async function notifyGroupMembers(params: {
       type: params.type.slice(0, 50),
       title: params.title.slice(0, 120),
       body: params.body.slice(0, 300),
-      link: (params.link || `/groups/${params.groupId}`).slice(0, 200),
+      link: (params.link || `/app/groups/${params.groupId}`).slice(0, 200),
       groupId: params.groupId,
       isRead: false,
       createdAt: serverTimestamp(),
@@ -161,6 +161,6 @@ export async function sendPaymentReminder(params: {
     title: `Payment reminder · ${params.groupName}`,
     body: `${params.senderName} reminded you about your pending balance of ${formatINR(params.amountPaise)} in ${params.groupName}.`,
     groupId: params.groupId,
-    link: `/groups/${params.groupId}`,
+    link: `/app/groups/${params.groupId}`,
   });
 }

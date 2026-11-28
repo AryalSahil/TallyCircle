@@ -467,7 +467,7 @@ export function ExpensesPage() {
                           <p className="text-xs text-slate-500 dark:text-slate-400">
                             <button
                               type="button"
-                              onClick={() => navigate(`/groups/${group.id}`)}
+                              onClick={() => navigate(`/app/groups/${group.id}`)}
                               className="font-medium text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer"
                             >
                               {group.name}

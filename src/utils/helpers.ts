@@ -17,6 +17,8 @@ export const GROUP_COVER_PRESETS = [
 ];
 
 export const AUTH_EDITORIAL_IMAGE = '/src/assets/images/auth_editorial_banner_1795773889050.jpg';
+export const PUBLIC_HERO_IMAGE = '/src/assets/images/hero_friends_ledger_1795894225431.jpg';
+export const ABOUT_PLANNING_IMAGE = '/src/assets/images/about_shared_planning_1795894225584.jpg';
 
 export async function sha256Hex(input: string): Promise<string> {
   const normalized = input.trim().toLowerCase();

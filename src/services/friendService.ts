@@ -235,7 +235,7 @@ export async function sendFriendRequest(
         type: 'friend_request',
         title: 'New friend request',
         body: `${me.fullName} (@${me.handle}) sent you a friend request.`,
-        link: '/friends',
+        link: '/app/friends',
       });
     } catch {
       // Notification failure is non-fatal once the friend request itself succeeds
@@ -329,7 +329,7 @@ export async function acceptFriendRequest(
       type: 'friend_accepted',
       title: 'Friend request accepted',
       body: `${me.fullName} accepted your friend request.`,
-      link: '/friends',
+      link: '/app/friends',
     });
   } catch {
     // Non-fatal
@@ -409,7 +409,7 @@ export async function respondFriendRequest(
         type: 'friend_accepted',
         title: 'Friend request accepted',
         body: `${me.fullName} accepted your friend request.`,
-        link: '/friends',
+        link: '/app/friends',
       });
     } catch {
       // Non-fatal

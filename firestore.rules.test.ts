@@ -215,5 +215,28 @@ export const FEATURE_SECURITY_CASES = [
     },
     expected: 'PERMISSION_DENIED',
   },
+  {
+    name: '27. Public visitor or signed-in user attempts to read /contactMessages',
+    path: '/contactMessages/msg_1',
+    operation: 'get',
+    auth: { uid: 'u1', token: { email_verified: true } },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '28. Contact submission attempts submitterUid spoofing or non-new status',
+    path: '/contactMessages/msg_2',
+    operation: 'create',
+    auth: { uid: 'u1', token: { email_verified: true } },
+    payload: {
+      name: 'Mallory',
+      email: 'mallory@example.com',
+      subject: 'Spoof attempt',
+      message: 'Attempting to attach someone else uid',
+      status: 'resolved',
+      sourcePath: '/contact',
+      submitterUid: 'victimUid',
+    },
+    expected: 'PERMISSION_DENIED',
+  },
 ];
 

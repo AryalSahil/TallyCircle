@@ -161,6 +161,70 @@ export async function createServerApp(options: { withVite?: boolean } = {}) {
     });
   });
 
+  // Anti-spam verification & sliding-window rate limiter for public contact submissions
+  const contactRateMap = new Map<string, number[]>();
+  app.post('/api/contact/verify', (req: Request, res: Response) => {
+    const { name, email, subject, message, honeypot, elapsedMs } = req.body as {
+      name?: unknown;
+      email?: unknown;
+      subject?: unknown;
+      message?: unknown;
+      honeypot?: unknown;
+      elapsedMs?: unknown;
+    };
+
+    if (typeof honeypot === 'string' && honeypot.trim().length > 0) {
+      res.status(400).json({ error: 'Unable to submit message.' });
+      return;
+    }
+    if (typeof elapsedMs === 'number' && elapsedMs < 1500) {
+      res.status(429).json({ error: 'Please take a moment before submitting the form.' });
+      return;
+    }
+
+    const cleanName = typeof name === 'string' ? name.trim() : '';
+    const cleanEmail = typeof email === 'string' ? email.trim() : '';
+    const cleanSubject = typeof subject === 'string' ? subject.trim() : '';
+    const cleanMessage = typeof message === 'string' ? message.trim() : '';
+
+    if (cleanName.length < 2 || cleanName.length > 80) {
+      res.status(400).json({ error: 'Name must be between 2 and 80 characters.' });
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(cleanEmail) || cleanEmail.length > 120) {
+      res.status(400).json({ error: 'Enter a valid email address.' });
+      return;
+    }
+    if (cleanSubject.length < 3 || cleanSubject.length > 120) {
+      res.status(400).json({ error: 'Subject must be between 3 and 120 characters.' });
+      return;
+    }
+    if (cleanMessage.length < 10 || cleanMessage.length > 2000) {
+      res.status(400).json({ error: 'Message must be between 10 and 2000 characters.' });
+      return;
+    }
+
+    const forwardedFor = req.headers['x-forwarded-for'];
+    const clientIp =
+      (Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor?.split(',')[0])?.trim() ||
+      req.ip ||
+      'unknown';
+
+    const now = Date.now();
+    const windowMs = 15 * 60 * 1000;
+    const recent = (contactRateMap.get(clientIp) || []).filter((ts) => now - ts < windowMs);
+    if (recent.length >= 5) {
+      res.status(429).json({
+        error: 'Too many messages sent recently. Please wait 15 minutes before sending another inquiry.',
+      });
+      return;
+    }
+    recent.push(now);
+    contactRateMap.set(clientIp, recent);
+
+    res.json({ ok: true });
+  });
+
   // Truthful email provider capability check
   app.get('/api/invitations/email-status', verifyFirebaseAuth, (_req: AuthedRequest, res: Response) => {
     res.json({

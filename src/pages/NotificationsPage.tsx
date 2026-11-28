@@ -94,7 +94,12 @@ export function NotificationsPage() {
                       // Non-fatal if navigation still proceeds
                     }
                   }
-                  if (n.link) navigate(n.link);
+                  if (n.link) {
+                    const target = n.link.startsWith('/app')
+                      ? n.link
+                      : `/app${n.link.startsWith('/') ? n.link : `/${n.link}`}`;
+                    navigate(target);
+                  }
                 }}
                 className="text-left flex-1 min-w-0 cursor-pointer"
               >

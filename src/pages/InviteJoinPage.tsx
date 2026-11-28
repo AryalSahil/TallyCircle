@@ -253,14 +253,14 @@ export function InviteJoinPage({ kind }: { kind: 'group' | 'trip' | 'friend' }) 
           res.alreadyMember ? `Already a member of ${res.groupName}` : `Joined ${res.groupName}`,
           { variant: 'success' }
         );
-        navigate(`/groups/${res.groupId}`);
+        navigate(`/app/groups/${res.groupId}`);
       } else if (kind === 'trip') {
         const res = await joinTripByToken(profile, token);
         showToast(
           res.alreadyMember ? `Already part of ${res.tripName}` : `Joined trip ${res.tripName}`,
           { variant: 'success' }
         );
-        navigate(`/trips/${res.tripId}`);
+        navigate(`/app/trips/${res.tripId}`);
       } else {
         const res = await redeemFriendInvite(profile, token);
         showToast(
@@ -271,7 +271,7 @@ export function InviteJoinPage({ kind }: { kind: 'group' | 'trip' | 'friend' }) 
               : `Friend request sent to ${res.creatorName}`,
           { variant: 'success' }
         );
-        navigate('/friends');
+        navigate('/app/friends');
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Could not join using this invitation.';
@@ -282,9 +282,9 @@ export function InviteJoinPage({ kind }: { kind: 'group' | 'trip' | 'friend' }) 
     }
   };
 
-  const listRoute = kind === 'trip' ? '/trips' : '/groups';
+  const listRoute = kind === 'trip' ? '/app/trips' : '/app/groups';
   const detailRoute =
-    kind === 'trip' ? `/trips/${alreadyMemberTargetId}` : `/groups/${alreadyMemberTargetId}`;
+    kind === 'trip' ? `/app/trips/${alreadyMemberTargetId}` : `/app/groups/${alreadyMemberTargetId}`;
 
   return (
     <div className="max-w-md mx-auto py-8 sm:py-12 px-2">
@@ -406,7 +406,7 @@ export function InviteJoinPage({ kind }: { kind: 'group' | 'trip' | 'friend' }) 
               )}
 
               <div className="flex flex-col-reverse sm:flex-row items-center justify-center gap-2.5 pt-2">
-                <Button variant="outline" onClick={() => navigate('/')} className="w-full sm:w-auto">
+                <Button variant="outline" onClick={() => navigate('/app')} className="w-full sm:w-auto">
                   Cancel
                 </Button>
                 <Button loading={accepting} onClick={handleAccept} className="w-full sm:w-auto">

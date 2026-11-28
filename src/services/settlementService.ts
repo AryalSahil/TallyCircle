@@ -135,7 +135,7 @@ export async function recordSettlement(
             ? `${payload.fromName} marked ${formatINR(payload.amountPaise)} paid via ${payload.method.toUpperCase()}. Please confirm receipt.`
             : `${me.fullName} requested ${formatINR(payload.amountPaise)} settlement in ${group.name}.`,
         groupId: group.id,
-        link: `/groups/${group.id}`,
+        link: `/app/groups/${group.id}`,
       })
   );
 
@@ -188,7 +188,7 @@ export async function markSettlementPaid(
       title: `${group.name} · Confirm payment`,
       body: `${me.fullName} sent ${formatINR(settlement.amountPaise)} (${updates.method.toUpperCase()}). Confirm once received.`,
       groupId: group.id,
-      link: `/groups/${group.id}`,
+      link: `/app/groups/${group.id}`,
     });
   } catch {
     // Notification delivery failure must not fail an already-committed settlement update
@@ -234,7 +234,7 @@ export async function confirmSettlement(
       title: `${group.name} · Payment confirmed`,
       body: `${me.fullName} confirmed your ${formatINR(settlement.amountPaise)} payment.`,
       groupId: group.id,
-      link: `/groups/${group.id}`,
+      link: `/app/groups/${group.id}`,
     });
   } catch {
     // Notification delivery failure must not fail an already-committed confirmation
@@ -281,7 +281,7 @@ export async function disputeSettlement(
       title: `${group.name} · Payment disputed`,
       body: `${me.fullName} flagged the ${formatINR(settlement.amountPaise)} settlement: ${reason.trim() || 'Not received'}`,
       groupId: group.id,
-      link: `/groups/${group.id}`,
+      link: `/app/groups/${group.id}`,
     });
   } catch {
     // Notification delivery failure must not fail an already-committed dispute
@@ -341,7 +341,7 @@ export async function updatePendingSettlement(
         title: `${group.name} · Settlement updated`,
         body: `${me.fullName} updated pending settlement to ${formatINR(updates.amountPaise)} (${updates.method.toUpperCase()}).`,
         groupId: group.id,
-        link: `/groups/${group.id}`,
+        link: `/app/groups/${group.id}`,
       })
   );
 }

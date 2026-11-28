@@ -1069,7 +1069,7 @@ export async function createEmailInvites(
         title: `Invited to ${group.name}`,
         body: `${me.fullName} invited you to join "${group.name}". Tap to review and join.`,
         groupId: group.id,
-        link: `/join/group/${invite.token}`,
+        link: `/app/join/group/${invite.token}`,
       });
     } catch {
       // Non-fatal

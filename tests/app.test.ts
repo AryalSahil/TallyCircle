@@ -281,6 +281,9 @@ describe('Security Rules & Spec Invariants', () => {
     assert.ok(fsRules.includes('function isValidReceiptMetadata(meta)'));
     assert.ok(fsRules.includes('function isValidExpenseCategory(cat)'));
     assert.ok(fsRules.includes("incoming().generatedCount == existing().generatedCount"));
+    assert.ok(fsRules.includes('match /contactMessages/{messageId}'));
+    assert.ok(fsRules.includes('function isValidContactMessage(data)'));
+    assert.ok(fsRules.includes('allow get, list: if false;'));
 
     const stRules = fs.readFileSync(path.resolve(process.cwd(), 'storage.rules'), 'utf8');
     assert.ok(stRules.includes('allow read, write: if false;'));
@@ -498,6 +501,79 @@ describe('Backend Express API Endpoints', () => {
         body: JSON.stringify({ text: 'Dinner 500' }),
       });
       assert.equal(aiRes.status, 401);
+
+      // /api/contact/verify anti-spam & rate-limit tests
+      const honeypotRes = await fetch(`${baseUrl}/api/contact/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Bot',
+          email: 'bot@example.com',
+          subject: 'Hello',
+          message: 'Spam message here.',
+          honeypot: 'http://spam.example',
+          elapsedMs: 4000,
+        }),
+      });
+      assert.equal(honeypotRes.status, 400);
+
+      const tooFastRes = await fetch(`${baseUrl}/api/contact/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Fast User',
+          email: 'fast@example.com',
+          subject: 'Quick',
+          message: 'Quick test message body.',
+          honeypot: '',
+          elapsedMs: 300,
+        }),
+      });
+      assert.equal(tooFastRes.status, 429);
+
+      const invalidEmailRes = await fetch(`${baseUrl}/api/contact/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Rohan',
+          email: 'invalid-email',
+          subject: 'Hello',
+          message: 'Valid message length here.',
+          honeypot: '',
+          elapsedMs: 3000,
+        }),
+      });
+      assert.equal(invalidEmailRes.status, 400);
+
+      for (let i = 0; i < 5; i++) {
+        const okRes = await fetch(`${baseUrl}/api/contact/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: 'Rohan Mehta',
+            email: 'rohan@example.com',
+            subject: `Support check ${i + 1}`,
+            message: 'Testing contact verification endpoint with valid payload.',
+            honeypot: '',
+            elapsedMs: 3500,
+          }),
+        });
+        assert.equal(okRes.status, 200);
+      }
+
+      const rateLimitedRes = await fetch(`${baseUrl}/api/contact/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Rohan Mehta',
+          email: 'rohan@example.com',
+          subject: 'Support check 6',
+          message: 'Sixth request within 15 minutes should be rate limited.',
+          honeypot: '',
+          elapsedMs: 3500,
+        }),
+      });
+      assert.equal(rateLimitedRes.status, 429);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

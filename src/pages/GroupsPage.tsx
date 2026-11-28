@@ -53,7 +53,7 @@ export function GroupsPage() {
       );
       setJoinOpen(false);
       setInviteInput('');
-      navigate(`/groups/${res.groupId}`);
+      navigate(`/app/groups/${res.groupId}`);
     } catch (err: unknown) {
       showToast('Could not join group', {
         description: err instanceof Error ? err.message : 'Invalid or expired invite link.',
@@ -142,7 +142,7 @@ export function GroupsPage() {
               >
                 <button
                   type="button"
-                  onClick={() => navigate(`/groups/${g.id}`)}
+                  onClick={() => navigate(`/app/groups/${g.id}`)}
                   className="text-left flex-1 flex flex-col cursor-pointer"
                 >
                   <div className="aspect-[16/9] w-full bg-slate-100 dark:bg-slate-800 relative overflow-hidden">
@@ -210,7 +210,7 @@ export function GroupsPage() {
       <GroupModal
         open={createOpen}
         onClose={() => setCreateOpen(false)}
-        onCreated={(id) => navigate(`/groups/${id}`)}
+        onCreated={(id) => navigate(`/app/groups/${id}`)}
       />
 
       <Modal

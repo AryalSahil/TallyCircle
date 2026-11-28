@@ -321,7 +321,7 @@ export async function createTrip(
       title: `Added to trip · ${payload.name.trim()}`,
       body: `${me.fullName} added you to the trip "${payload.name.trim()}" (${payload.destination.trim()}).`,
       groupId: tripRef.id,
-      link: `/trips/${tripRef.id}`,
+      link: `/app/trips/${tripRef.id}`,
     });
   } catch {
     // Non-fatal
@@ -484,7 +484,7 @@ export async function addParticipantsToTrip(
       title: `Added to trip · ${trip.name}`,
       body: `${me.fullName} added you to trip "${trip.name}" (${trip.destination}).`,
       groupId: trip.id,
-      link: `/trips/${trip.id}`,
+      link: `/app/trips/${trip.id}`,
     });
   } catch {
     // Non-fatal
@@ -994,7 +994,7 @@ export async function joinTripByToken(
         title: `${safeName} joined ${result.tripName}`,
         body: `${safeName} joined the trip "${result.tripName}" via invitation link.`,
         groupId: result.tripId,
-        link: `/trips/${result.tripId}`,
+        link: `/app/trips/${result.tripId}`,
       });
     }
   } catch {
@@ -1095,7 +1095,7 @@ export async function addTripExpense(
         title: `${trip.name} · New trip expense`,
         body: `${me.fullName} added "${payload.title.trim()}" for ${displayOriginal}.`,
         groupId: trip.id,
-        link: `/trips/${trip.id}`,
+        link: `/app/trips/${trip.id}`,
       })
   );
 
@@ -1172,7 +1172,7 @@ export async function updateTripExpense(
         title: `${trip.name} · Expense updated`,
         body: `${me.fullName} updated "${payload.title.trim()}" (${displayOriginal}).`,
         groupId: trip.id,
-        link: `/trips/${trip.id}`,
+        link: `/app/trips/${trip.id}`,
       });
     }
   );
@@ -1350,7 +1350,7 @@ export async function recordTripSettlement(
             ? `${payload.fromName} marked ${formatINR(payload.amountPaise)} paid via ${payload.method.toUpperCase()}. Please confirm receipt.`
             : `${me.fullName} requested ${formatINR(payload.amountPaise)} settlement for ${trip.name}.`,
         groupId: trip.id,
-        link: `/trips/${trip.id}`,
+        link: `/app/trips/${trip.id}`,
       })
   );
 
@@ -1399,7 +1399,7 @@ export async function markTripSettlementPaid(
       title: `${trip.name} · Confirm trip payment`,
       body: `${me.fullName} sent ${formatINR(settlement.amountPaise)} (${updates.method.toUpperCase()}). Confirm once received.`,
       groupId: trip.id,
-      link: `/trips/${trip.id}`,
+      link: `/app/trips/${trip.id}`,
     });
   } catch {
     // Non-fatal
@@ -1445,7 +1445,7 @@ export async function confirmTripSettlement(
       title: `${trip.name} · Trip payment confirmed`,
       body: `${me.fullName} confirmed your ${formatINR(settlement.amountPaise)} payment.`,
       groupId: trip.id,
-      link: `/trips/${trip.id}`,
+      link: `/app/trips/${trip.id}`,
     });
   } catch {
     // Non-fatal

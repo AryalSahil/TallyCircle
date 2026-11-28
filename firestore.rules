@@ -392,6 +392,19 @@ service cloud.firestore {
         && data.createdAt is timestamp;
     }
 
+    function isValidContactMessage(data) {
+      return data.keys().hasAll(['name', 'email', 'subject', 'message', 'status', 'sourcePath', 'createdAt'])
+        && data.keys().hasOnly(['name', 'email', 'subject', 'message', 'status', 'sourcePath', 'submitterUid', 'createdAt'])
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 80
+        && data.email is string && data.email.size() >= 5 && data.email.size() <= 120 && data.email.matches('^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$')
+        && data.subject is string && data.subject.size() >= 3 && data.subject.size() <= 120
+        && data.message is string && data.message.size() >= 10 && data.message.size() <= 2000
+        && data.status == 'new'
+        && data.sourcePath == '/contact'
+        && (!('submitterUid' in data) || (isSignedIn() && data.submitterUid is string && data.submitterUid == request.auth.uid))
+        && data.createdAt is timestamp;
+    }
+
     // --- Collection Rules ---
 
     match /users/{uid} {
@@ -1131,6 +1144,14 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().diff(existing()).affectedKeys().hasOnly(['isRead']);
       allow delete: if isValidId(notificationId) && isVerifiedUser() && existing().recipientUid == request.auth.uid;
+    }
+
+    match /contactMessages/{messageId} {
+      allow get, list: if false;
+      allow create: if isValidId(messageId)
+        && isValidContactMessage(incoming())
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
     }
   }
 }

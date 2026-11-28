@@ -210,7 +210,7 @@ export function TripDetailPage() {
         <p className="text-sm text-slate-600 dark:text-slate-300">
           Trip not found or you do not have access to it.
         </p>
-        <Button variant="outline" onClick={() => navigate('/trips')}>
+        <Button variant="outline" onClick={() => navigate('/app/trips')}>
           <ArrowLeft className="w-4 h-4" />
           Back to Trips
         </Button>
@@ -252,7 +252,7 @@ export function TripDetailPage() {
       await removeOrLeaveTripParticipant(profile, trip, profile.uid);
       showToast('You left the trip', { variant: 'info' });
       setConfirmLeaveOpen(false);
-      navigate('/trips');
+      navigate('/app/trips');
     } catch (err: unknown) {
       showToast('Cannot leave trip', {
         description: err instanceof Error ? err.message : 'Try again.',
@@ -287,7 +287,7 @@ export function TripDetailPage() {
       await deleteTripWithData(profile, trip);
       showToast(`Deleted "${trip.name}"`, { variant: 'info' });
       setConfirmDeleteTripOpen(false);
-      navigate('/trips');
+      navigate('/app/trips');
     } catch (err: unknown) {
       showToast('Could not delete trip', {
         description: err instanceof Error ? err.message : 'Try again.',
@@ -374,7 +374,7 @@ export function TripDetailPage() {
           <div className="relative z-10 flex items-center justify-between gap-2">
             <button
               type="button"
-              onClick={() => navigate('/trips')}
+              onClick={() => navigate('/app/trips')}
               className="inline-flex items-center gap-1.5 rounded-lg bg-slate-950/65 hover:bg-slate-950/85 text-white px-3 min-h-[36px] py-1.5 text-xs font-medium backdrop-blur-xs cursor-pointer"
             >
               <ArrowLeft className="w-3.5 h-3.5" />

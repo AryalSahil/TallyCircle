@@ -255,7 +255,7 @@ export function GroupDetailPage() {
         <p className="text-sm text-slate-600 dark:text-slate-300">
           Group not found or you do not have access to it.
         </p>
-        <Button variant="outline" onClick={() => navigate('/groups')}>
+        <Button variant="outline" onClick={() => navigate('/app/groups')}>
           <ArrowLeft className="w-4 h-4" />
           Back to Groups
         </Button>
@@ -295,7 +295,7 @@ export function GroupDetailPage() {
         variant: 'info',
       });
       setConfirmLeaveOpen(false);
-      navigate('/groups');
+      navigate('/app/groups');
     } catch (err: unknown) {
       showToast('Cannot leave group', {
         description: err instanceof Error ? err.message : 'Try again.',
@@ -330,7 +330,7 @@ export function GroupDetailPage() {
       await deleteGroupWithData(profile, group);
       showToast(`Deleted "${group.name}"`, { variant: 'info' });
       setConfirmDeleteGroupOpen(false);
-      navigate('/groups');
+      navigate('/app/groups');
     } catch (err: unknown) {
       showToast('Could not delete group', {
         description: err instanceof Error ? err.message : 'Try again.',
@@ -523,7 +523,7 @@ export function GroupDetailPage() {
           <div className="relative z-10">
             <button
               type="button"
-              onClick={() => navigate('/groups')}
+              onClick={() => navigate('/app/groups')}
               className="inline-flex items-center gap-1.5 rounded-lg bg-slate-950/65 hover:bg-slate-950/85 text-white px-3 min-h-[36px] py-1.5 text-xs font-medium backdrop-blur-xs cursor-pointer"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
