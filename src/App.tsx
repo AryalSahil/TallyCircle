@@ -34,6 +34,15 @@ const ProfilePage = lazy(() =>
 const InviteJoinPage = lazy(() =>
   import('./pages/InviteJoinPage').then((m) => ({ default: m.InviteJoinPage }))
 );
+const TripsPage = lazy(() =>
+  import('./pages/TripsPage').then((m) => ({ default: m.TripsPage }))
+);
+const TripDetailPage = lazy(() =>
+  import('./pages/TripDetailPage').then((m) => ({ default: m.TripDetailPage }))
+);
+const ExpensesPage = lazy(() =>
+  import('./pages/ExpensesPage').then((m) => ({ default: m.ExpensesPage }))
+);
 
 function RouteLoadingFallback() {
   return (
@@ -47,7 +56,11 @@ function RouteLoadingFallback() {
 const PENDING_INVITE_KEY = 'tallycircle_pending_invite_path';
 
 function isInvitePath(pathname: string): boolean {
-  return pathname.startsWith('/join/group/') || pathname.startsWith('/join/friend/');
+  return (
+    pathname.startsWith('/join/group/') ||
+    pathname.startsWith('/join/trip/') ||
+    pathname.startsWith('/join/friend/')
+  );
 }
 
 function AuthenticatedRouter() {
@@ -126,11 +139,15 @@ function AuthenticatedRouter() {
             <Route path="/" element={<DashboardPage onAddExpense={openQuickExpense} />} />
             <Route path="/groups" element={<GroupsPage />} />
             <Route path="/groups/:groupId" element={<GroupDetailPage />} />
+            <Route path="/trips" element={<TripsPage />} />
+            <Route path="/trips/:tripId" element={<TripDetailPage />} />
+            <Route path="/expenses" element={<ExpensesPage />} />
             <Route path="/friends" element={<FriendsPage />} />
             <Route path="/analytics" element={<AnalyticsPage />} />
             <Route path="/notifications" element={<NotificationsPage />} />
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/join/group/:token" element={<InviteJoinPage kind="group" />} />
+            <Route path="/join/trip/:token" element={<InviteJoinPage kind="trip" />} />
             <Route path="/join/friend/:token" element={<InviteJoinPage kind="friend" />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

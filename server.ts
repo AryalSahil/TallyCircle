@@ -111,23 +111,38 @@ function readFsStringArray(fields: Record<string, FirestoreFieldValue> | undefin
 }
 
 const VALID_CATEGORIES = [
-  'Food',
-  'Restaurant',
-  'Travel',
-  'Hotel',
-  'Clubbing',
+  'Food & Drinks',
+  'Transport',
+  'Accommodation',
   'Shopping',
   'Entertainment',
-  'Transport',
-  'Fuel',
-  'Tickets',
+  'Groceries',
+  'Bills',
+  'Travel',
   'Other',
 ] as const;
+
+const LEGACY_CATEGORY_MAP: Record<string, (typeof VALID_CATEGORIES)[number]> = {
+  Food: 'Food & Drinks',
+  Restaurant: 'Food & Drinks',
+  Hotel: 'Accommodation',
+  Clubbing: 'Entertainment',
+  Fuel: 'Transport',
+  Tickets: 'Entertainment',
+};
 
 const VALID_SPLIT_METHODS: SplitMethod[] = ['equal', 'unequal', 'percentage', 'shares'];
 
 export async function createServerApp(options: { withVite?: boolean } = {}) {
   const app = express();
+  app.disable('x-powered-by');
+  app.use((_req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
+    next();
+  });
   app.use(express.json({ limit: '4mb' }));
 
   const emailProviderConfigured = Boolean(process.env.RESEND_API_KEY?.trim());
@@ -159,7 +174,8 @@ export async function createServerApp(options: { withVite?: boolean } = {}) {
 
   // Server-side invitation validation against Firestore REST using caller's verified Bearer token
   app.post('/api/invitations/validate', verifyFirebaseAuth, async (req: AuthedRequest, res: Response) => {
-    const { token } = req.body as { token?: unknown };
+    const { token, kind } = req.body as { token?: unknown; kind?: unknown };
+    const inviteKind = kind === 'trip' ? 'trip' : 'group';
     if (typeof token !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(token)) {
       res.json({
         valid: false,
@@ -171,9 +187,10 @@ export async function createServerApp(options: { withVite?: boolean } = {}) {
 
     const idToken = req.headers.authorization!.slice('Bearer '.length).trim();
     const baseFsUrl = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(firebaseConfig.projectId)}/databases/${encodeURIComponent(firebaseConfig.firestoreDatabaseId)}/documents`;
+    const inviteCollection = inviteKind === 'trip' ? 'tripInvites' : 'groupInvites';
 
     try {
-      const invRes = await fetch(`${baseFsUrl}/groupInvites/${encodeURIComponent(token)}`, {
+      const invRes = await fetch(`${baseFsUrl}/${inviteCollection}/${encodeURIComponent(token)}`, {
         headers: { Authorization: `Bearer ${idToken}` },
       });
 
@@ -181,7 +198,7 @@ export async function createServerApp(options: { withVite?: boolean } = {}) {
         res.json({
           valid: false,
           reason: 'invalid',
-          message: 'This group invitation link does not exist or has been removed.',
+          message: `This ${inviteKind} invitation link does not exist or has been removed.`,
         });
         return;
       }
@@ -193,8 +210,9 @@ export async function createServerApp(options: { withVite?: boolean } = {}) {
 
       const invDoc = (await invRes.json()) as { fields?: Record<string, FirestoreFieldValue> };
       const fields = invDoc.fields;
-      const groupId = readFsString(fields, 'groupId');
-      const groupName = readFsString(fields, 'groupName');
+      const targetId = readFsString(fields, inviteKind === 'trip' ? 'tripId' : 'groupId');
+      const targetName = readFsString(fields, inviteKind === 'trip' ? 'tripName' : 'groupName');
+      const destination = readFsString(fields, 'destination');
       const createdByName = readFsString(fields, 'createdByName');
       const status = readFsString(fields, 'status') || 'active';
       const expiresAtIso = readFsTimestamp(fields, 'expiresAt');
@@ -202,22 +220,35 @@ export async function createServerApp(options: { withVite?: boolean } = {}) {
       const usesCount = readFsInt(fields, 'usesCount');
       const usedBy = readFsStringArray(fields, 'usedBy');
 
-      const inviteMeta = {
-        token,
-        groupId,
-        groupName,
-        createdByName,
-        expiresAtIso,
-        maxUses,
-        usesCount,
-        status,
-      };
+      const inviteMeta =
+        inviteKind === 'trip'
+          ? {
+              token,
+              tripId: targetId,
+              tripName: targetName,
+              destination,
+              createdByName,
+              expiresAtIso,
+              maxUses,
+              usesCount,
+              status,
+            }
+          : {
+              token,
+              groupId: targetId,
+              groupName: targetName,
+              createdByName,
+              expiresAtIso,
+              maxUses,
+              usesCount,
+              status,
+            };
 
       if (status === 'revoked') {
         res.json({
           valid: false,
           reason: 'revoked',
-          message: 'This group invitation link was revoked by a group member.',
+          message: `This ${inviteKind} invitation link was revoked by a member.`,
           invite: inviteMeta,
         });
         return;
@@ -227,41 +258,56 @@ export async function createServerApp(options: { withVite?: boolean } = {}) {
         res.json({
           valid: false,
           reason: 'expired',
-          message: 'This group invitation link has expired.',
+          message: `This ${inviteKind} invitation link has expired.`,
           invite: inviteMeta,
         });
         return;
       }
 
-      // Check if caller is already an active member of the group (readable iff already in memberUids)
-      const grpRes = await fetch(`${baseFsUrl}/groups/${encodeURIComponent(groupId)}`, {
+      const targetCollection = inviteKind === 'trip' ? 'trips' : 'groups';
+      const targetRes = await fetch(`${baseFsUrl}/${targetCollection}/${encodeURIComponent(targetId)}`, {
         headers: { Authorization: `Bearer ${idToken}` },
       });
-      if (grpRes.ok) {
-        const grpDoc = (await grpRes.json()) as { fields?: Record<string, FirestoreFieldValue> };
-        const gFields = grpDoc.fields;
-        const memberUids = readFsStringArray(gFields, 'memberUids');
+      if (targetRes.ok) {
+        const targetDoc = (await targetRes.json()) as { fields?: Record<string, FirestoreFieldValue> };
+        const tFields = targetDoc.fields;
+        const memberUids = readFsStringArray(
+          tFields,
+          inviteKind === 'trip' ? 'participantUids' : 'memberUids'
+        );
         if (req.uid && memberUids.includes(req.uid)) {
           res.json({
             valid: true,
             reason: 'already_member',
-            message: 'You are already a member of this group.',
+            message: `You are already part of this ${inviteKind}.`,
             invite: inviteMeta,
-            group: {
-              id: groupId,
-              name: readFsString(gFields, 'name') || groupName,
-              description: readFsString(gFields, 'description'),
-              memberCount: memberUids.length,
-              isArchived: readFsBool(gFields, 'isArchived'),
-            },
+            ...(inviteKind === 'trip'
+              ? {
+                  trip: {
+                    id: targetId,
+                    name: readFsString(tFields, 'name') || targetName,
+                    destination: readFsString(tFields, 'destination') || destination,
+                    memberCount: memberUids.length,
+                    isArchived: readFsBool(tFields, 'isArchived'),
+                  },
+                }
+              : {
+                  group: {
+                    id: targetId,
+                    name: readFsString(tFields, 'name') || targetName,
+                    description: readFsString(tFields, 'description'),
+                    memberCount: memberUids.length,
+                    isArchived: readFsBool(tFields, 'isArchived'),
+                  },
+                }),
           });
           return;
         }
-      } else if (grpRes.status === 404) {
+      } else if (targetRes.status === 404) {
         res.json({
           valid: false,
           reason: 'group_deleted',
-          message: 'This group has been deleted and is no longer available.',
+          message: `This ${inviteKind} has been deleted and is no longer available.`,
           invite: inviteMeta,
         });
         return;
@@ -271,7 +317,7 @@ export async function createServerApp(options: { withVite?: boolean } = {}) {
         res.json({
           valid: false,
           reason: 'limit_reached',
-          message: 'This group invitation link has reached its maximum usage limit.',
+          message: `This ${inviteKind} invitation link has reached its maximum usage limit.`,
           invite: inviteMeta,
         });
         return;
@@ -281,7 +327,7 @@ export async function createServerApp(options: { withVite?: boolean } = {}) {
         res.json({
           valid: false,
           reason: 'already_used',
-          message: 'You already redeemed this invitation link previously. Ask a group member for a fresh link.',
+          message: `You already redeemed this invitation link previously. Ask a participant for a fresh link.`,
           invite: inviteMeta,
         });
         return;
@@ -350,9 +396,20 @@ export async function createServerApp(options: { withVite?: boolean } = {}) {
       return;
     }
 
+    const escapeHtml = (val: string) =>
+      val
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+
     const fromAddress = process.env.EMAIL_FROM?.trim() || 'TallyCircle <onboarding@resend.dev>';
     const senderLabel = (inviterName || 'A friend').slice(0, 80);
     const safeGroup = groupName.slice(0, 80);
+    const safeGroupHtml = escapeHtml(safeGroup);
+    const safeSenderHtml = escapeHtml(senderLabel);
+    const safeUrlHtml = escapeHtml(safeInviteUrl);
 
     const results = await Promise.all(
       validRecipients.map(async (r) => {
@@ -375,15 +432,15 @@ export async function createServerApp(options: { withVite?: boolean } = {}) {
                 safeInviteUrl,
               ].join('\n'),
               html: `<div style="font-family:Inter,system-ui,sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#0f172a;">
-                <h2 style="margin:0 0 12px;">Join "${safeGroup.replace(/[<>&"]/g, '')}" on TallyCircle</h2>
+                <h2 style="margin:0 0 12px;">Join "${safeGroupHtml}" on TallyCircle</h2>
                 <p style="margin:0 0 20px;color:#475569;line-height:1.5;">
-                  <strong>${senderLabel.replace(/[<>&"]/g, '')}</strong> invited you to collaborate and split shared expenses in <strong>${safeGroup.replace(/[<>&"]/g, '')}</strong>.
+                  <strong>${safeSenderHtml}</strong> invited you to collaborate and split shared expenses in <strong>${safeGroupHtml}</strong>.
                 </p>
-                <a href="${safeInviteUrl}" style="display:inline-block;background:#059669;color:#ffffff;text-decoration:none;font-weight:600;padding:12px 20px;border-radius:8px;">
+                <a href="${safeUrlHtml}" style="display:inline-block;background:#059669;color:#ffffff;text-decoration:none;font-weight:600;padding:12px 20px;border-radius:8px;">
                   Accept &amp; Join Group
                 </a>
                 <p style="margin:20px 0 0;font-size:12px;color:#64748b;word-break:break-all;">
-                  Or copy this invitation link:<br/>${safeInviteUrl}
+                  Or copy this invitation link:<br/>${safeUrlHtml}
                 </p>
               </div>`,
             }),
@@ -519,6 +576,10 @@ export async function createServerApp(options: { withVite?: boolean } = {}) {
       res.status(400).json({ error: 'expenses and settlements arrays are required.' });
       return;
     }
+    if (expenses.length > 2000 || settlements.length > 2000) {
+      res.status(400).json({ error: 'Reconciliation payload exceeds maximum batch size (2000).' });
+      return;
+    }
 
     const computed = computeGroupBalances(memberNames, expenses, settlements);
     const zeroSumValid = verifyZeroSumBalance(computed.memberBalances);
@@ -555,6 +616,10 @@ export async function createServerApp(options: { withVite?: boolean } = {}) {
 
       if (imageBase64 && typeof imageBase64 === 'string') {
         const cleanBase64 = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
+        if (cleanBase64.length > 2_500_000) {
+          res.status(400).json({ error: 'Receipt image exceeds maximum allowed size.' });
+          return;
+        }
         const safeMime =
           mimeType && /^image\/(png|jpeg|jpg|webp)$/i.test(mimeType) ? mimeType : 'image/jpeg';
         parts.push({
@@ -614,7 +679,10 @@ export async function createServerApp(options: { withVite?: boolean } = {}) {
       });
 
       const parsed = JSON.parse((response.text ?? '{}').trim());
-      const category = VALID_CATEGORIES.includes(parsed.category) ? parsed.category : 'Other';
+      const rawCategory = String(parsed.category || '');
+      const category = (VALID_CATEGORIES as readonly string[]).includes(rawCategory)
+        ? rawCategory
+        : LEGACY_CATEGORY_MAP[rawCategory] || 'Other';
       const validCurrencies = ['INR', 'USD', 'EUR', 'GBP', 'AED', 'SGD', 'THB'];
       const currency = validCurrencies.includes(String(parsed.currency || '').toUpperCase())
         ? String(parsed.currency).toUpperCase()
@@ -704,11 +772,57 @@ export async function createServerApp(options: { withVite?: boolean } = {}) {
   if (options.withVite !== false) {
     const isProd = process.env.NODE_ENV === 'production';
     if (!isProd) {
+      // Disable Vite HMR WebSocket over Cloud Run reverse proxies unless explicitly enabled
+      if (!process.env.DISABLE_HMR && process.env.ENABLE_HMR !== 'true') {
+        process.env.DISABLE_HMR = 'true';
+      }
+      const hmrDisabled = process.env.DISABLE_HMR === 'true';
       const { createServer: createViteServer } = await import('vite');
       const vite = await createViteServer({
-        server: { middlewareMode: true },
+        server: hmrDisabled
+          ? { middlewareMode: true, ws: false, hmr: false }
+          : { middlewareMode: true },
         appType: 'spa',
       });
+      if (hmrDisabled) {
+        app.get('/@vite/client', (_req: Request, res: Response) => {
+          res.type('application/javascript; charset=utf-8');
+          res.send(`
+const sheetsMap = new Map();
+export class ErrorOverlay extends HTMLElement {}
+export function updateStyle(id, content) {
+  let style = sheetsMap.get(id);
+  if (!style) {
+    style = document.createElement('style');
+    style.setAttribute('type', 'text/css');
+    style.setAttribute('data-vite-dev-id', id);
+    style.textContent = content;
+    document.head.appendChild(style);
+  } else if (style.textContent !== content) {
+    style.textContent = content;
+  }
+  sheetsMap.set(id, style);
+}
+export function removeStyle(id) {
+  const style = sheetsMap.get(id);
+  if (style) {
+    style.remove();
+    sheetsMap.delete(id);
+  }
+}
+export function createHotContext() {
+  const noop = () => {};
+  return { data: {}, accept: noop, acceptExports: noop, dispose: noop, prune: noop, decline: noop, invalidate: noop, on: noop, off: noop, send: noop };
+}
+export function injectQuery(url, queryToInject) {
+  if (url[0] !== '.' && url[0] !== '/') return url;
+  const pathname = url.replace(/[?#].*$/, '');
+  const { search, hash } = new URL(url, 'http://vite.dev');
+  return \`\${pathname}?\${queryToInject}\${search ? '&' + search.slice(1) : ''}\${hash || ''}\`;
+}
+`);
+        });
+      }
       app.use(vite.middlewares);
     } else {
       const distPath = path.resolve(__dirname, 'dist');

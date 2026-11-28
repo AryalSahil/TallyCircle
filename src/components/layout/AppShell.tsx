@@ -18,6 +18,8 @@ import {
   WifiOff,
   AlertTriangle,
   RotateCcw,
+  Plane,
+  Repeat,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -28,12 +30,22 @@ import { Avatar, Button } from '../ui/Primitives';
 import { GlobalSearchModal } from '../GlobalSearchModal';
 import { PWAUpdateBanner } from '../PWAUpdateBanner';
 
-const NAV_ITEMS = [
+const DESKTOP_NAV_ITEMS = [
   { to: '/', label: 'Overview', icon: LayoutDashboard },
+  { to: '/trips', label: 'Trips', icon: Plane },
   { to: '/groups', label: 'Groups', icon: Layers },
-  { to: '/friends', label: 'Friends', icon: Users },
+  { to: '/expenses', label: 'Expenses', icon: Repeat },
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
+  { to: '/friends', label: 'Friends', icon: Users },
   { to: '/notifications', label: 'Alerts', icon: Bell },
+];
+
+const MOBILE_BOTTOM_NAV = [
+  { to: '/', label: 'Overview', icon: LayoutDashboard },
+  { to: '/trips', label: 'Trips', icon: Plane },
+  { to: '/groups', label: 'Groups', icon: Layers },
+  { to: '/expenses', label: 'Recurring', icon: Repeat },
+  { to: '/analytics', label: 'Analytics', icon: BarChart3 },
 ];
 
 export function AppShell({ onQuickAddExpense }: { onQuickAddExpense: () => void }) {
@@ -43,6 +55,7 @@ export function AppShell({ onQuickAddExpense }: { onQuickAddExpense: () => void 
   const {
     unreadNotificationsCount,
     activeGroups,
+    activeTrips,
     syncStatus,
     hasPendingWrites,
     lastSyncError,
@@ -82,10 +95,13 @@ export function AppShell({ onQuickAddExpense }: { onQuickAddExpense: () => void 
 
   const pageTitle = (() => {
     if (location.pathname === '/') return 'Overview';
+    if (location.pathname.startsWith('/trips/')) return 'Trip Mode';
+    if (location.pathname.startsWith('/trips')) return 'Trips';
     if (location.pathname.startsWith('/groups/')) return 'Group Ledger';
     if (location.pathname.startsWith('/groups')) return 'Groups';
+    if (location.pathname.startsWith('/expenses')) return 'Expenses & Recurring';
     if (location.pathname.startsWith('/friends')) return 'Friends';
-    if (location.pathname.startsWith('/analytics')) return 'Analytics';
+    if (location.pathname.startsWith('/analytics')) return 'Analytics & Reports';
     if (location.pathname.startsWith('/notifications')) return 'Notifications';
     if (location.pathname.startsWith('/profile')) return 'Profile & Settings';
     return 'TallyCircle';
@@ -93,7 +109,7 @@ export function AppShell({ onQuickAddExpense }: { onQuickAddExpense: () => void 
 
   const renderNavLinks = (isMobileDrawer = false) => (
     <>
-      {NAV_ITEMS.map((item) => {
+      {DESKTOP_NAV_ITEMS.map((item) => {
         const Icon = item.icon;
         const badge = item.to === '/notifications' ? unreadNotificationsCount : 0;
         return (
@@ -103,7 +119,7 @@ export function AppShell({ onQuickAddExpense }: { onQuickAddExpense: () => void 
             end={item.to === '/'}
             onClick={() => isMobileDrawer && setMobileMenuOpen(false)}
             className={({ isActive }) =>
-              `flex items-center justify-between gap-3 px-3 min-h-[44px] py-2.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
+              `flex items-center justify-between gap-3 px-3 min-h-[42px] py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
                 isActive
                   ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/50'
@@ -123,7 +139,40 @@ export function AppShell({ onQuickAddExpense }: { onQuickAddExpense: () => void 
         );
       })}
 
-      <div className="pt-5 pb-2 px-3">
+      <div className="pt-4 pb-1.5 px-3">
+        <p className="text-xs font-medium text-slate-400 dark:text-slate-500">
+          Active trips
+        </p>
+      </div>
+      {activeTrips.length === 0 ? (
+        <p className="px-3 text-xs text-slate-400 dark:text-slate-500">
+          No active trips
+        </p>
+      ) : (
+        <div className="space-y-0.5">
+          {activeTrips.slice(0, isMobileDrawer ? 8 : 4).map((t) => (
+            <NavLink
+              key={t.id}
+              to={`/trips/${t.id}`}
+              onClick={() => isMobileDrawer && setMobileMenuOpen(false)}
+              className={({ isActive }) =>
+                `flex items-center justify-between gap-2 px-3 min-h-[38px] py-1.5 rounded-lg text-sm truncate transition-colors ${
+                  isActive
+                    ? 'bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 font-medium'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-100'
+                }`
+              }
+            >
+              <span className="truncate">{t.name}</span>
+              <span className="text-[11px] text-slate-400 truncate max-w-[75px] shrink-0">
+                {t.destination}
+              </span>
+            </NavLink>
+          ))}
+        </div>
+      )}
+
+      <div className="pt-4 pb-1.5 px-3">
         <p className="text-xs font-medium text-slate-400 dark:text-slate-500">
           Active groups
         </p>
@@ -134,13 +183,13 @@ export function AppShell({ onQuickAddExpense }: { onQuickAddExpense: () => void 
         </p>
       ) : (
         <div className="space-y-0.5">
-          {activeGroups.slice(0, isMobileDrawer ? 12 : 6).map((g) => (
+          {activeGroups.slice(0, isMobileDrawer ? 10 : 5).map((g) => (
             <NavLink
               key={g.id}
               to={`/groups/${g.id}`}
               onClick={() => isMobileDrawer && setMobileMenuOpen(false)}
               className={({ isActive }) =>
-                `flex items-center px-3 min-h-[40px] py-2 rounded-lg text-sm truncate transition-colors ${
+                `flex items-center px-3 min-h-[38px] py-1.5 rounded-lg text-sm truncate transition-colors ${
                   isActive
                     ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 font-medium'
                     : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-100'
@@ -384,6 +433,19 @@ export function AppShell({ onQuickAddExpense }: { onQuickAddExpense: () => void 
               <Search className="w-4 h-4" />
             </button>
 
+            <NavLink
+              to="/notifications"
+              aria-label="Notifications"
+              className="lg:hidden relative min-w-[40px] min-h-[40px] rounded-lg border border-slate-200 dark:border-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            >
+              <Bell className="w-4 h-4" />
+              {unreadNotificationsCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-emerald-600 text-white text-[10px] font-mono-nums font-bold flex items-center justify-center">
+                  {unreadNotificationsCount > 9 ? '9+' : unreadNotificationsCount}
+                </span>
+              )}
+            </NavLink>
+
             <select
               aria-label="Preferred display currency"
               value={baseCurrency}
@@ -475,9 +537,8 @@ export function AppShell({ onQuickAddExpense }: { onQuickAddExpense: () => void 
         aria-label="Primary mobile navigation"
         className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm grid grid-cols-5 items-center pb-safe px-1"
       >
-        {NAV_ITEMS.map((item) => {
+        {MOBILE_BOTTOM_NAV.map((item) => {
           const Icon = item.icon;
-          const badge = item.to === '/notifications' ? unreadNotificationsCount : 0;
           return (
             <NavLink
               key={item.to}
@@ -493,11 +554,6 @@ export function AppShell({ onQuickAddExpense }: { onQuickAddExpense: () => void 
             >
               <Icon className="w-4 h-4 mb-0.5" />
               <span className="truncate max-w-full px-0.5">{item.label}</span>
-              {badge > 0 && (
-                <span className="absolute top-1.5 right-2.5 font-mono-nums text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
-                  {badge}
-                </span>
-              )}
             </NavLink>
           );
         })}

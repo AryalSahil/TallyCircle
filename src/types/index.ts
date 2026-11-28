@@ -1,20 +1,32 @@
 import type { Timestamp } from 'firebase/firestore';
 
 export const EXPENSE_CATEGORIES = [
-  'Food',
-  'Restaurant',
-  'Travel',
-  'Hotel',
-  'Clubbing',
+  'Food & Drinks',
+  'Transport',
+  'Accommodation',
   'Shopping',
   'Entertainment',
-  'Transport',
-  'Fuel',
-  'Tickets',
+  'Groceries',
+  'Bills',
+  'Travel',
   'Other',
 ] as const;
 
-export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
+export const LEGACY_EXPENSE_CATEGORIES = [
+  'Food',
+  'Restaurant',
+  'Hotel',
+  'Clubbing',
+  'Fuel',
+  'Tickets',
+] as const;
+
+export const ALL_VALID_EXPENSE_CATEGORIES = [
+  ...EXPENSE_CATEGORIES,
+  ...LEGACY_EXPENSE_CATEGORIES,
+] as const;
+
+export type ExpenseCategory = (typeof ALL_VALID_EXPENSE_CATEGORIES)[number];
 
 export const CURRENCY_CODES = ['INR', 'USD', 'EUR', 'GBP', 'AED', 'SGD', 'THB'] as const;
 export type CurrencyCode = (typeof CURRENCY_CODES)[number];
@@ -42,8 +54,19 @@ export const PRESET_EXPENSE_TAGS = ['vacation', 'work', 'essential', 'weekend', 
 export type SplitMethod = 'equal' | 'unequal' | 'percentage' | 'shares';
 export type SettlementMethod = 'cash' | 'upi';
 export type SettlementStatus = 'pending' | 'awaiting_confirmation' | 'confirmed' | 'disputed';
-export type RecurringFrequency = 'none' | 'weekly' | 'monthly' | 'custom';
+export type RecurringFrequency = 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom';
+export type RecurringRuleFrequency = 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom';
+export type RecurringRuleStatus = 'active' | 'paused' | 'cancelled' | 'completed';
 export type ThemePreference = 'light' | 'dark' | 'system';
+
+export interface ReceiptMetadata {
+  storagePath: string;
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+  uploadedByUid: string;
+  uploadedAt: string;
+}
 
 export interface UserPrivateProfile {
   uid: string;
@@ -182,6 +205,7 @@ export interface ExpenseShare {
 export interface Expense {
   id: string;
   groupId: string;
+  tripId?: string;
   title: string;
   description: string;
   amountPaise: number;
@@ -197,12 +221,90 @@ export interface Expense {
   participantUids: string[];
   payerUids: string[];
   receiptImage?: string;
+  receiptMetadata?: ReceiptMetadata;
   isRecurring: boolean;
   recurringFrequency: RecurringFrequency;
   recurringIntervalDays?: number;
   nextOccurrenceDate?: string;
+  recurringRuleId?: string;
+  occurrenceKey?: string;
   createdBy: string;
   updatedBy: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export interface RecurringExpenseRule {
+  id: string;
+  groupId: string;
+  title: string;
+  description: string;
+  amountPaise: number;
+  currency?: CurrencyCode;
+  originalAmountMinor?: number;
+  exchangeRateToInr?: number;
+  tags?: string[];
+  category: ExpenseCategory;
+  splitMethod: SplitMethod;
+  payers: ExpensePayer[];
+  shares: ExpenseShare[];
+  participantUids: string[];
+  payerUids: string[];
+  frequency: RecurringRuleFrequency;
+  intervalDays: number;
+  anchorDayOfMonth: number;
+  monthEndPolicy: 'clamp_last_day';
+  startDate: string;
+  endDate?: string;
+  nextOccurrenceDate: string;
+  status: RecurringRuleStatus;
+  generatedCount: number;
+  lastGeneratedDate?: string;
+  lastGeneratedAt?: Timestamp;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export interface Trip {
+  id: string;
+  name: string;
+  destination: string;
+  description: string;
+  coverImage?: string;
+  startDate: string;
+  endDate: string;
+  currency: CurrencyCode;
+  exchangeRateToInr: number;
+  exchangeRateUpdatedAt?: string;
+  budgetPaise: number;
+  memberBudgetsPaise?: Record<string, number>;
+  isArchived: boolean;
+  participantUids: string[];
+  participantNames: Record<string, string>;
+  participantEmails?: Record<string, string>;
+  participantJoinedAt?: Record<string, string>;
+  lastJoinToken?: string;
+  createdBy: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export interface TripInvite {
+  token: string;
+  tripId: string;
+  tripName: string;
+  destination?: string;
+  createdBy: string;
+  createdByName?: string;
+  status?: 'active' | 'revoked';
+  revokedBy?: string;
+  revokedAt?: Timestamp;
+  expiresAt: Timestamp;
+  maxUses: number;
+  usesCount: number;
+  usedBy: string[];
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

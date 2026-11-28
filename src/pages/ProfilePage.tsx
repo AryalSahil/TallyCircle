@@ -311,7 +311,12 @@ export function ProfilePage() {
             <button
               key={opt}
               type="button"
-              onClick={() => setTheme(opt)}
+              onClick={() => {
+                setTheme(opt);
+                if (profile.theme !== opt) {
+                  updateMyProfile({ theme: opt }).catch(() => {});
+                }
+              }}
               className={`px-3 sm:px-4 min-h-[36px] py-1.5 rounded-md text-xs font-medium capitalize transition-colors cursor-pointer ${
                 theme === opt
                   ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'

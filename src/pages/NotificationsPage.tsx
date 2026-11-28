@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bell, CheckCheck, Trash2 } from 'lucide-react';
 import { useAppData } from '../contexts/AppDataContext';
+import { useToast } from '../contexts/ToastContext';
 import {
   deleteNotification,
   markAllNotificationsRead,
@@ -12,7 +13,40 @@ import { Button, Card, EmptyState } from '../components/ui/Primitives';
 
 export function NotificationsPage() {
   const { notifications, unreadNotificationsCount } = useAppData();
+  const { showToast } = useToast();
   const navigate = useNavigate();
+  const [markingAll, setMarkingAll] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const handleMarkAll = async () => {
+    if (markingAll) return;
+    setMarkingAll(true);
+    try {
+      await markAllNotificationsRead(notifications);
+    } catch (err: unknown) {
+      showToast('Could not mark notifications read', {
+        description: err instanceof Error ? err.message : 'Try again.',
+        variant: 'error',
+      });
+    } finally {
+      setMarkingAll(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (deletingId) return;
+    setDeletingId(id);
+    try {
+      await deleteNotification(id);
+    } catch (err: unknown) {
+      showToast('Could not delete notification', {
+        description: err instanceof Error ? err.message : 'Try again.',
+        variant: 'error',
+      });
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   return (
     <div className="space-y-5 max-w-3xl">
@@ -26,7 +60,8 @@ export function NotificationsPage() {
           <Button
             size="sm"
             variant="outline"
-            onClick={() => markAllNotificationsRead(notifications)}
+            loading={markingAll}
+            onClick={handleMarkAll}
           >
             <CheckCheck className="w-4 h-4" />
             Mark all as read
@@ -52,7 +87,13 @@ export function NotificationsPage() {
               <button
                 type="button"
                 onClick={async () => {
-                  if (!n.isRead) await markNotificationRead(n.id);
+                  if (!n.isRead) {
+                    try {
+                      await markNotificationRead(n.id);
+                    } catch {
+                      // Non-fatal if navigation still proceeds
+                    }
+                  }
                   if (n.link) navigate(n.link);
                 }}
                 className="text-left flex-1 min-w-0 cursor-pointer"
@@ -84,8 +125,9 @@ export function NotificationsPage() {
               <button
                 type="button"
                 aria-label="Delete notification"
-                onClick={() => deleteNotification(n.id)}
-                className="min-w-[40px] min-h-[40px] flex items-center justify-center text-slate-400 hover:text-red-500 rounded-lg cursor-pointer shrink-0"
+                disabled={deletingId === n.id}
+                onClick={() => handleDelete(n.id)}
+                className="min-w-[40px] min-h-[40px] flex items-center justify-center text-slate-400 hover:text-red-500 rounded-lg cursor-pointer shrink-0 disabled:opacity-50"
               >
                 <Trash2 className="w-4 h-4" />
               </button>

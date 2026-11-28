@@ -1,5 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Upload, Trash2, Zap, CheckCircle2, AlertCircle, Tag, Plus } from 'lucide-react';
+import {
+  Zap,
+  CheckCircle2,
+  AlertCircle,
+  Tag,
+  Plus,
+  Repeat,
+  Layers,
+  Plane,
+} from 'lucide-react';
+import { collection, doc } from 'firebase/firestore';
+import { db } from '../../lib/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useAppData } from '../../contexts/AppDataContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
@@ -13,11 +24,17 @@ import {
   ExpensePayer,
   Group,
   PRESET_EXPENSE_TAGS,
+  ReceiptMetadata,
   RecurringFrequency,
+  RecurringRuleFrequency,
   SUPPORTED_CURRENCIES,
   SplitMethod,
+  Trip,
 } from '../../types';
 import { addExpense, updateExpense } from '../../services/expenseService';
+import { addTripExpense, updateTripExpense } from '../../services/tripService';
+import { createRecurringRule } from '../../services/recurringService';
+import { uploadReceiptAttachment } from '../../services/storageService';
 import { parseExpenseWithAI } from '../../services/aiService';
 import {
   amountToMinorUnits,
@@ -29,22 +46,43 @@ import {
   normalizeExpenseTag,
   paiseToInputString,
 } from '../../utils/finance';
-import { compressImageFile } from '../../utils/helpers';
+import {
+  buildOccurrenceIdempotencyKey,
+  computeNextOccurrenceDate,
+  extractAnchorDayOfMonth,
+  getTodayIsoDate,
+} from '../../utils/recurrence';
+import { ReceiptAttachmentControl } from '../ReceiptAttachmentControl';
 import { Button, InputField, Modal } from '../ui/Primitives';
+
+async function fileToBase64DataUrl(file: File): Promise<{ dataUrl: string; mimeType: string }> {
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () =>
+      resolve({
+        dataUrl: String(reader.result || ''),
+        mimeType: file.type || 'image/jpeg',
+      });
+    reader.onerror = () => reject(new Error('Could not read receipt image.'));
+    reader.readAsDataURL(file);
+  });
+}
 
 export function ExpenseFormModal({
   open,
   onClose,
   defaultGroupId,
+  defaultTripId,
   editingExpense,
 }: {
   open: boolean;
   onClose: () => void;
   defaultGroupId?: string;
+  defaultTripId?: string;
   editingExpense?: Expense | null;
 }) {
   const { profile, updateMyProfile } = useAuth();
-  const { activeGroups, groups } = useAppData();
+  const { activeGroups, groups, activeTrips, trips } = useAppData();
   const { baseCurrency } = useCurrency();
   const { showToast } = useToast();
 
@@ -53,7 +91,14 @@ export function ExpenseFormModal({
     [editingExpense, activeGroups, groups]
   );
 
+  const availableTrips = useMemo(
+    () => (editingExpense ? trips : activeTrips.length > 0 ? activeTrips : trips),
+    [editingExpense, activeTrips, trips]
+  );
+
+  const [targetScope, setTargetScope] = useState<'group' | 'trip'>('group');
   const [groupId, setGroupId] = useState('');
+  const [tripId, setTripId] = useState('');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [currency, setCurrency] = useState<CurrencyCode>('INR');
@@ -61,7 +106,7 @@ export function ExpenseFormModal({
   const [amountInput, setAmountInput] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [newTagInput, setNewTagInput] = useState('');
-  const [category, setCategory] = useState<ExpenseCategory>('Food');
+  const [category, setCategory] = useState<ExpenseCategory>('Food & Drinks');
   const [expenseDate, setExpenseDate] = useState(() => new Date().toISOString().slice(0, 16));
   const [splitMethod, setSplitMethod] = useState<SplitMethod>('equal');
   const [multiPayerMode, setMultiPayerMode] = useState(false);
@@ -69,10 +114,19 @@ export function ExpenseFormModal({
   const [payerAmounts, setPayerAmounts] = useState<Record<string, string>>({});
   const [selectedParticipants, setSelectedParticipants] = useState<string[]>([]);
   const [rawSplitInputs, setRawSplitInputs] = useState<Record<string, string>>({});
-  const [receiptImage, setReceiptImage] = useState('');
+
+  // Firebase Storage Receipt state
+  const [pendingReceiptFile, setPendingReceiptFile] = useState<File | null>(null);
+  const [existingReceiptMeta, setExistingReceiptMeta] = useState<ReceiptMetadata | null>(null);
+  const [legacyReceiptImage, setLegacyReceiptImage] = useState('');
+  const [receiptRemoved, setReceiptRemoved] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+
+  // Recurring expense state
   const [isRecurring, setIsRecurring] = useState(false);
-  const [recurringFrequency, setRecurringFrequency] = useState<RecurringFrequency>('monthly');
+  const [recurringFrequency, setRecurringFrequency] = useState<RecurringRuleFrequency>('monthly');
   const [recurringIntervalDays, setRecurringIntervalDays] = useState('30');
+  const [recurringEndDate, setRecurringEndDate] = useState('');
 
   const [quickPrompt, setQuickPrompt] = useState('');
   const [aiParsing, setAiParsing] = useState(false);
@@ -88,23 +142,65 @@ export function ExpenseFormModal({
   }, [profile?.customTags, tags]);
 
   const selectedGroup: Group | undefined = useMemo(
-    () => availableGroups.find((g) => g.id === groupId),
-    [availableGroups, groupId]
+    () => (targetScope === 'group' ? availableGroups.find((g) => g.id === groupId) : undefined),
+    [targetScope, availableGroups, groupId]
   );
 
-  const groupMembers = useMemo(() => {
-    if (!selectedGroup) return [];
-    return selectedGroup.memberUids.map((uid) => ({
-      uid,
-      name: selectedGroup.memberNames[uid] || 'Member',
-    }));
-  }, [selectedGroup]);
+  const selectedTrip: Trip | undefined = useMemo(
+    () => (targetScope === 'trip' ? availableTrips.find((t) => t.id === tripId) : undefined),
+    [targetScope, availableTrips, tripId]
+  );
+
+  const activeParent = targetScope === 'trip' ? selectedTrip : selectedGroup;
+
+  const activeMemberNames = useMemo<Record<string, string>>(() => {
+    if (selectedTrip) return selectedTrip.participantNames;
+    if (selectedGroup) return selectedGroup.memberNames;
+    return {};
+  }, [selectedTrip, selectedGroup]);
+
+  const activeMemberUids = useMemo<string[]>(() => {
+    if (selectedTrip) return selectedTrip.participantUids;
+    if (selectedGroup) return selectedGroup.memberUids;
+    return [];
+  }, [selectedTrip, selectedGroup]);
+
+  const members = useMemo(
+    () =>
+      activeMemberUids.map((uid) => ({
+        uid,
+        name: activeMemberNames[uid] || 'Member',
+      })),
+    [activeMemberUids, activeMemberNames]
+  );
+
+  const categoryOptions = useMemo<ExpenseCategory[]>(() => {
+    const base: ExpenseCategory[] = [...EXPENSE_CATEGORIES];
+    if (editingExpense && !base.includes(editingExpense.category)) {
+      base.push(editingExpense.category);
+    }
+    return base;
+  }, [editingExpense]);
 
   // Initialize form when opened
   useEffect(() => {
     if (!open) return;
 
+    setPendingReceiptFile(null);
+    setReceiptRemoved(false);
+    setUploadProgress(null);
+
     if (editingExpense) {
+      const isTripEdit = Boolean(editingExpense.tripId);
+      setTargetScope(isTripEdit ? 'trip' : 'group');
+      if (isTripEdit) {
+        setTripId(editingExpense.tripId || editingExpense.groupId);
+        setGroupId('');
+      } else {
+        setGroupId(editingExpense.groupId);
+        setTripId('');
+      }
+
       const expCurrency: CurrencyCode = isSupportedCurrency(editingExpense.currency)
         ? editingExpense.currency
         : 'INR';
@@ -117,7 +213,6 @@ export function ExpenseFormModal({
           ? editingExpense.originalAmountMinor
           : editingExpense.amountPaise;
 
-      setGroupId(editingExpense.groupId);
       setTitle(editingExpense.title);
       setDescription(editingExpense.description || '');
       setCurrency(expCurrency);
@@ -128,12 +223,16 @@ export function ExpenseFormModal({
       setCategory(editingExpense.category);
       setExpenseDate(editingExpense.expenseDate.slice(0, 16));
       setSplitMethod(editingExpense.splitMethod);
-      setReceiptImage(editingExpense.receiptImage || '');
+      setExistingReceiptMeta(editingExpense.receiptMetadata || null);
+      setLegacyReceiptImage(editingExpense.receiptImage || '');
       setIsRecurring(editingExpense.isRecurring);
       setRecurringFrequency(
-        editingExpense.recurringFrequency === 'none' ? 'monthly' : editingExpense.recurringFrequency
+        editingExpense.recurringFrequency === 'none'
+          ? 'monthly'
+          : (editingExpense.recurringFrequency as RecurringRuleFrequency)
       );
       setRecurringIntervalDays(String(editingExpense.recurringIntervalDays || 30));
+      setRecurringEndDate('');
 
       if (editingExpense.payers.length > 1) {
         setMultiPayerMode(true);
@@ -153,7 +252,10 @@ export function ExpenseFormModal({
       editingExpense.shares.forEach((s) => {
         if (editingExpense.splitMethod === 'unequal') {
           splitMap[s.uid] = paiseToInputString(s.sharePaise);
-        } else if (editingExpense.splitMethod === 'percentage' || editingExpense.splitMethod === 'shares') {
+        } else if (
+          editingExpense.splitMethod === 'percentage' ||
+          editingExpense.splitMethod === 'shares'
+        ) {
           splitMap[s.uid] = String(s.rawValue);
         }
       });
@@ -162,43 +264,86 @@ export function ExpenseFormModal({
       return;
     }
 
+    const startInTrip =
+      Boolean(defaultTripId) || (availableGroups.length === 0 && availableTrips.length > 0);
+    const initialScope: 'group' | 'trip' = startInTrip ? 'trip' : 'group';
     const initialGroupId = defaultGroupId || availableGroups[0]?.id || '';
-    const defaultCurr: CurrencyCode = isSupportedCurrency(baseCurrency) ? baseCurrency : 'INR';
+    const initialTripId = defaultTripId || availableTrips[0]?.id || '';
+
+    const chosenTrip =
+      initialScope === 'trip' ? availableTrips.find((t) => t.id === initialTripId) : undefined;
+    const chosenGroup =
+      initialScope === 'group' ? availableGroups.find((g) => g.id === initialGroupId) : undefined;
+
+    const defaultCurr: CurrencyCode =
+      chosenTrip && isSupportedCurrency(chosenTrip.currency)
+        ? chosenTrip.currency
+        : isSupportedCurrency(baseCurrency)
+          ? baseCurrency
+          : 'INR';
+    const defaultRate =
+      chosenTrip && chosenTrip.currency === defaultCurr && chosenTrip.exchangeRateToInr > 0
+        ? chosenTrip.exchangeRateToInr
+        : SUPPORTED_CURRENCIES[defaultCurr].defaultRateToInr;
+
+    setTargetScope(initialScope);
     setGroupId(initialGroupId);
+    setTripId(initialTripId);
     setTitle('');
     setDescription('');
     setCurrency(defaultCurr);
-    setExchangeRateInput(String(SUPPORTED_CURRENCIES[defaultCurr].defaultRateToInr));
+    setExchangeRateInput(String(defaultRate));
     setAmountInput('');
     setTags([]);
     setNewTagInput('');
-    setCategory('Food');
+    setCategory('Food & Drinks');
     setExpenseDate(new Date().toISOString().slice(0, 16));
     setSplitMethod('equal');
     setMultiPayerMode(false);
     setSinglePayerUid(profile?.uid || '');
     setPayerAmounts({});
     setRawSplitInputs({});
-    setReceiptImage('');
+    setExistingReceiptMeta(null);
+    setLegacyReceiptImage('');
     setIsRecurring(false);
     setRecurringFrequency('monthly');
     setRecurringIntervalDays('30');
+    setRecurringEndDate('');
     setQuickPrompt('');
 
-    const grp = availableGroups.find((g) => g.id === initialGroupId);
-    if (grp) {
-      setSelectedParticipants(grp.memberUids);
-    }
-  }, [open, editingExpense, defaultGroupId, profile?.uid, baseCurrency]);
+    const initMembers = chosenTrip
+      ? chosenTrip.participantUids
+      : chosenGroup
+        ? chosenGroup.memberUids
+        : [];
+    setSelectedParticipants(initMembers);
+  }, [open, editingExpense, defaultGroupId, defaultTripId, profile?.uid, baseCurrency]);
 
-  // Reset participants when switching groups on new expense
+  // Reset participants and trip currency when switching target parent on new expense
   useEffect(() => {
-    if (!open || editingExpense || !selectedGroup) return;
-    setSelectedParticipants(selectedGroup.memberUids);
-    if (!selectedGroup.memberUids.includes(singlePayerUid)) {
-      setSinglePayerUid(profile?.uid && selectedGroup.memberUids.includes(profile.uid) ? profile.uid : selectedGroup.memberUids[0] || '');
+    if (!open || editingExpense || !activeParent) return;
+    const uids = selectedTrip
+      ? selectedTrip.participantUids
+      : selectedGroup
+        ? selectedGroup.memberUids
+        : [];
+    setSelectedParticipants(uids);
+    if (!uids.includes(singlePayerUid)) {
+      setSinglePayerUid(profile?.uid && uids.includes(profile.uid) ? profile.uid : uids[0] || '');
     }
-  }, [groupId]);
+    if (selectedTrip) {
+      const tc = isSupportedCurrency(selectedTrip.currency) ? selectedTrip.currency : 'INR';
+      setCurrency(tc);
+      setExchangeRateInput(
+        String(
+          selectedTrip.exchangeRateToInr > 0
+            ? selectedTrip.exchangeRateToInr
+            : SUPPORTED_CURRENCIES[tc].defaultRateToInr
+        )
+      );
+      setIsRecurring(false);
+    }
+  }, [targetScope, groupId, tripId]);
 
   const parsedExchangeRate = useMemo(() => {
     if (currency === 'INR') return 1;
@@ -214,7 +359,11 @@ export function ExpenseFormModal({
 
   const handleCurrencyChange = (next: CurrencyCode) => {
     setCurrency(next);
-    setExchangeRateInput(String(SUPPORTED_CURRENCIES[next].defaultRateToInr));
+    if (selectedTrip && selectedTrip.currency === next && selectedTrip.exchangeRateToInr > 0) {
+      setExchangeRateInput(String(selectedTrip.exchangeRateToInr));
+    } else {
+      setExchangeRateInput(String(SUPPORTED_CURRENCIES[next].defaultRateToInr));
+    }
   };
 
   const toggleTag = (rawTag: string) => {
@@ -245,21 +394,29 @@ export function ExpenseFormModal({
 
   // Compute payers list & validation
   const payersResult = useMemo(() => {
-    if (!selectedGroup) return { payers: [] as ExpensePayer[], isValid: false, error: 'Select a group.' };
-    if (totalPaise <= 0) return { payers: [] as ExpensePayer[], isValid: false, error: 'Enter total amount.' };
+    if (!activeParent) {
+      return {
+        payers: [] as ExpensePayer[],
+        isValid: false,
+        error: targetScope === 'trip' ? 'Select a trip.' : 'Select a group.',
+      };
+    }
+    if (totalPaise <= 0) {
+      return { payers: [] as ExpensePayer[], isValid: false, error: 'Enter total amount.' };
+    }
 
     if (!multiPayerMode) {
-      const uid = singlePayerUid || groupMembers[0]?.uid;
+      const uid = singlePayerUid || members[0]?.uid;
       if (!uid) return { payers: [] as ExpensePayer[], isValid: false, error: 'Select a payer.' };
       return {
-        payers: [{ uid, name: selectedGroup.memberNames[uid] || 'Member', amountPaise: totalPaise }],
+        payers: [{ uid, name: activeMemberNames[uid] || 'Member', amountPaise: totalPaise }],
         isValid: true,
       };
     }
 
     const payers: ExpensePayer[] = [];
     let sum = 0;
-    for (const m of groupMembers) {
+    for (const m of members) {
       const paise = inrToPaise(payerAmounts[m.uid] || '0');
       if (paise > 0) {
         payers.push({ uid: m.uid, name: m.name, amountPaise: paise });
@@ -277,11 +434,11 @@ export function ExpenseFormModal({
             ? `${formatINR(diff)} remaining in payer totals.`
             : `${formatINR(Math.abs(diff))} over total expense in payer amounts.`,
     };
-  }, [selectedGroup, totalPaise, multiPayerMode, singlePayerUid, groupMembers, payerAmounts]);
+  }, [activeParent, targetScope, totalPaise, multiPayerMode, singlePayerUid, members, activeMemberNames, payerAmounts]);
 
   // Compute participant shares & validation
   const splitResult = useMemo(() => {
-    const activeMembers = groupMembers.filter((m) => selectedParticipants.includes(m.uid));
+    const activeMembers = members.filter((m) => selectedParticipants.includes(m.uid));
     const inputs = activeMembers.map((m) => {
       const rawStr = rawSplitInputs[m.uid] || '';
       if (splitMethod === 'unequal') {
@@ -299,7 +456,7 @@ export function ExpenseFormModal({
     });
 
     return computeSplits(totalPaise, splitMethod, inputs);
-  }, [groupMembers, selectedParticipants, rawSplitInputs, splitMethod, totalPaise]);
+  }, [members, selectedParticipants, rawSplitInputs, splitMethod, totalPaise]);
 
   const toggleParticipant = (uid: string) => {
     setSelectedParticipants((prev) =>
@@ -307,36 +464,30 @@ export function ExpenseFormModal({
     );
   };
 
-  const handleReceiptUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const compressed = await compressImageFile(file, 1000, 320000);
-      setReceiptImage(compressed);
-    } catch (err: unknown) {
-      showToast('Receipt upload failed', {
-        description: err instanceof Error ? err.message : 'Choose a smaller image.',
-        variant: 'error',
-      });
-    }
-  };
-
   const handleSmartScan = async () => {
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       showToast('Smart scan requires an internet connection', { variant: 'error' });
       return;
     }
-    if (!quickPrompt.trim() && !receiptImage) {
+    if (!quickPrompt.trim() && !pendingReceiptFile && !legacyReceiptImage) {
       showToast('Enter a note or attach a receipt first', { variant: 'info' });
       return;
     }
     setAiParsing(true);
     try {
+      let imageBase64: string | undefined = legacyReceiptImage || undefined;
+      let mimeType: string | undefined = legacyReceiptImage ? 'image/jpeg' : undefined;
+      if (pendingReceiptFile) {
+        const encoded = await fileToBase64DataUrl(pendingReceiptFile);
+        imageBase64 = encoded.dataUrl;
+        mimeType = encoded.mimeType;
+      }
+
       const parsed = await parseExpenseWithAI({
         text: quickPrompt.trim() || undefined,
-        imageBase64: receiptImage || undefined,
-        mimeType: receiptImage ? 'image/jpeg' : undefined,
-        memberNames: groupMembers.map((m) => m.name),
+        imageBase64,
+        mimeType,
+        memberNames: members.map((m) => m.name),
       });
 
       if (parsed.title) setTitle(parsed.title);
@@ -358,8 +509,12 @@ export function ExpenseFormModal({
       }
       if (parsed.matchedMembers.length > 0) {
         const matchedLower = parsed.matchedMembers.map((n) => n.toLowerCase());
-        const matchedUids = groupMembers
-          .filter((m) => matchedLower.some((mn) => m.name.toLowerCase().includes(mn) || mn.includes(m.name.toLowerCase())))
+        const matchedUids = members
+          .filter((m) =>
+            matchedLower.some(
+              (mn) => m.name.toLowerCase().includes(mn) || mn.includes(m.name.toLowerCase())
+            )
+          )
           .map((m) => m.uid);
         if (profile?.uid && !matchedUids.includes(profile.uid)) matchedUids.push(profile.uid);
         if (matchedUids.length > 0) setSelectedParticipants(matchedUids);
@@ -376,18 +531,22 @@ export function ExpenseFormModal({
     }
   };
 
-  const computeNextOccurrence = (baseDate: string, freq: RecurringFrequency, customDays: number): string => {
-    if (freq === 'none') return '';
-    const d = new Date(baseDate || Date.now());
-    if (freq === 'weekly') d.setDate(d.getDate() + 7);
-    else if (freq === 'monthly') d.setMonth(d.getMonth() + 1);
-    else d.setDate(d.getDate() + Math.max(1, customDays));
-    return d.toISOString().slice(0, 10);
-  };
+  const recurringPreviewNextDate = useMemo(() => {
+    if (!isRecurring) return '';
+    const startIso = (expenseDate || getTodayIsoDate()).slice(0, 10);
+    const interval =
+      recurringFrequency === 'custom' ? Math.max(1, parseInt(recurringIntervalDays, 10) || 30) : 0;
+    return computeNextOccurrenceDate(
+      startIso,
+      recurringFrequency,
+      interval,
+      extractAnchorDayOfMonth(startIso)
+    );
+  }, [isRecurring, expenseDate, recurringFrequency, recurringIntervalDays]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!profile || !selectedGroup) return;
+    if (!profile || !activeParent) return;
     if (!title.trim()) {
       showToast('Enter an expense title', { variant: 'error' });
       return;
@@ -401,64 +560,197 @@ export function ExpenseFormModal({
       return;
     }
 
-    const freq: RecurringFrequency = isRecurring ? recurringFrequency : 'none';
-    const intervalDays = freq === 'custom' ? Math.max(1, parseInt(recurringIntervalDays, 10) || 30) : 0;
+    const startIso = (expenseDate || getTodayIsoDate()).slice(0, 10);
+    if (isRecurring && recurringEndDate && recurringEndDate < startIso) {
+      showToast('Recurring end date must be on or after the start date', { variant: 'error' });
+      return;
+    }
+
+    const storageScope = targetScope === 'trip' ? 'trips' : 'groups';
+    const parentId = activeParent.id;
+    const targetExpenseId =
+      editingExpense?.id || doc(collection(db, storageScope, parentId, 'expenses')).id;
 
     setSubmitting(true);
     try {
-      const payload = {
-        title,
-        description,
-        amountPaise: totalPaise,
-        currency,
-        originalAmountMinor: originalAmountMinor || totalPaise,
-        exchangeRateToInr: parsedExchangeRate,
-        tags,
-        category,
-        expenseDate,
-        splitMethod,
-        payers: payersResult.payers,
-        shares: splitResult.shares,
-        receiptImage,
-        isRecurring,
-        recurringFrequency: freq,
-        recurringIntervalDays: intervalDays,
-        nextOccurrenceDate: isRecurring ? computeNextOccurrence(expenseDate, freq, intervalDays) : '',
-      };
+      let nextReceiptMeta: ReceiptMetadata | null = receiptRemoved
+        ? null
+        : existingReceiptMeta;
+      let nextLegacyImage = receiptRemoved ? '' : legacyReceiptImage;
+
+      if (pendingReceiptFile) {
+        setUploadProgress(1);
+        nextReceiptMeta = await uploadReceiptAttachment({
+          scope: storageScope,
+          parentId,
+          expenseId: targetExpenseId,
+          file: pendingReceiptFile,
+          uid: profile.uid,
+          onProgress: setUploadProgress,
+        });
+        nextLegacyImage = '';
+      }
+
+      const prevStoragePath = editingExpense?.receiptMetadata?.storagePath;
+      const shouldEnableRecurring = isRecurring && targetScope === 'group' && Boolean(selectedGroup);
+      const freq: RecurringFrequency = shouldEnableRecurring ? recurringFrequency : 'none';
+      const intervalDays =
+        freq === 'custom' ? Math.max(1, parseInt(recurringIntervalDays, 10) || 30) : 0;
 
       if (editingExpense) {
-        const { queuedOffline } = await updateExpense(
-          profile,
-          selectedGroup,
-          editingExpense.id,
-          payload
-        );
-        if (queuedOffline) {
-          showToast('Saved offline — queued for sync', {
-            description: 'Changes are stored locally and will sync automatically when you reconnect.',
-            variant: 'info',
+        if (targetScope === 'trip' && selectedTrip) {
+          const { queuedOffline } = await updateTripExpense(
+            profile,
+            selectedTrip,
+            editingExpense.id,
+            {
+              title,
+              description,
+              amountPaise: totalPaise,
+              currency,
+              originalAmountMinor: originalAmountMinor || totalPaise,
+              exchangeRateToInr: parsedExchangeRate,
+              tags,
+              category,
+              expenseDate,
+              splitMethod,
+              payers: payersResult.payers,
+              shares: splitResult.shares,
+              receiptImage: nextLegacyImage,
+              receiptMetadata: nextReceiptMeta,
+            },
+            prevStoragePath
+          );
+          showToast(queuedOffline ? 'Saved offline — queued for sync' : 'Trip expense updated', {
+            variant: queuedOffline ? 'info' : 'success',
           });
-        } else {
-          showToast('Expense updated', { variant: 'success' });
+        } else if (selectedGroup) {
+          const { queuedOffline } = await updateExpense(
+            profile,
+            selectedGroup,
+            editingExpense.id,
+            {
+              title,
+              description,
+              amountPaise: totalPaise,
+              currency,
+              originalAmountMinor: originalAmountMinor || totalPaise,
+              exchangeRateToInr: parsedExchangeRate,
+              tags,
+              category,
+              expenseDate,
+              splitMethod,
+              payers: payersResult.payers,
+              shares: splitResult.shares,
+              receiptImage: nextLegacyImage,
+              receiptMetadata: nextReceiptMeta,
+              isRecurring: shouldEnableRecurring,
+              recurringFrequency: freq,
+              recurringIntervalDays: intervalDays,
+              nextOccurrenceDate: shouldEnableRecurring ? recurringPreviewNextDate : '',
+            },
+            prevStoragePath
+          );
+          showToast(queuedOffline ? 'Saved offline — queued for sync' : 'Expense updated', {
+            variant: queuedOffline ? 'info' : 'success',
+          });
         }
-      } else {
-        const { queuedOffline } = await addExpense(profile, selectedGroup, payload);
-        if (queuedOffline) {
-          showToast('Saved offline — queued for sync', {
-            description: 'Expense stored locally and will sync automatically when you reconnect.',
-            variant: 'info',
+      } else if (targetScope === 'trip' && selectedTrip) {
+        const { queuedOffline } = await addTripExpense(profile, selectedTrip, {
+          expenseId: targetExpenseId,
+          title,
+          description,
+          amountPaise: totalPaise,
+          currency,
+          originalAmountMinor: originalAmountMinor || totalPaise,
+          exchangeRateToInr: parsedExchangeRate,
+          tags,
+          category,
+          expenseDate,
+          splitMethod,
+          payers: payersResult.payers,
+          shares: splitResult.shares,
+          receiptImage: nextLegacyImage,
+          receiptMetadata: nextReceiptMeta,
+        });
+        showToast(queuedOffline ? 'Saved offline — queued for sync' : 'Trip expense added', {
+          variant: queuedOffline ? 'info' : 'success',
+        });
+      } else if (selectedGroup) {
+        const todayIso = getTodayIsoDate();
+        let createdRuleId: string | undefined;
+        let shouldLogInitialNow = true;
+
+        if (shouldEnableRecurring) {
+          shouldLogInitialNow = startIso <= todayIso;
+          createdRuleId = await createRecurringRule(profile, selectedGroup, {
+            title,
+            description,
+            amountPaise: totalPaise,
+            currency,
+            originalAmountMinor: originalAmountMinor || totalPaise,
+            exchangeRateToInr: parsedExchangeRate,
+            tags,
+            category,
+            splitMethod,
+            payers: payersResult.payers,
+            shares: splitResult.shares,
+            frequency: recurringFrequency,
+            intervalDays,
+            startDate: startIso,
+            endDate: recurringEndDate || '',
+            skipInitialOccurrence: shouldLogInitialNow,
           });
+        }
+
+        if (shouldLogInitialNow) {
+          const occurrenceKey = createdRuleId
+            ? buildOccurrenceIdempotencyKey(createdRuleId, startIso)
+            : undefined;
+          const { queuedOffline } = await addExpense(profile, selectedGroup, {
+            expenseId: occurrenceKey || targetExpenseId,
+            title,
+            description,
+            amountPaise: totalPaise,
+            currency,
+            originalAmountMinor: originalAmountMinor || totalPaise,
+            exchangeRateToInr: parsedExchangeRate,
+            tags,
+            category,
+            expenseDate,
+            splitMethod,
+            payers: payersResult.payers,
+            shares: splitResult.shares,
+            receiptImage: nextLegacyImage,
+            receiptMetadata: nextReceiptMeta,
+            isRecurring: shouldEnableRecurring,
+            recurringFrequency: freq,
+            recurringIntervalDays: intervalDays,
+            nextOccurrenceDate: shouldEnableRecurring ? recurringPreviewNextDate : '',
+            recurringRuleId: createdRuleId,
+            occurrenceKey,
+          });
+          showToast(
+            queuedOffline
+              ? 'Saved offline — queued for sync'
+              : createdRuleId
+                ? 'Expense logged & recurring schedule active'
+                : 'Expense added',
+            { variant: queuedOffline ? 'info' : 'success' }
+          );
         } else {
-          showToast('Expense added', { variant: 'success' });
+          showToast(`Recurring schedule created starting ${startIso}`, { variant: 'success' });
         }
       }
 
-      // Persist any brand-new custom tags to user's tag library
+      // Persist brand-new custom tags to user's tag library
       const existingLibrary = new Set(profile.customTags || []);
       const newlyCreatedTags = tags.filter((t) => !existingLibrary.has(t));
       if (newlyCreatedTags.length > 0) {
         updateMyProfile({
-          customTags: Array.from(new Set([...(profile.customTags || []), ...newlyCreatedTags])).slice(0, 40),
+          customTags: Array.from(
+            new Set([...(profile.customTags || []), ...newlyCreatedTags])
+          ).slice(0, 40),
         }).catch(() => {});
       }
 
@@ -470,21 +762,24 @@ export function ExpenseFormModal({
       });
     } finally {
       setSubmitting(false);
+      setUploadProgress(null);
     }
   };
+
+  const hasAnyDestination = availableGroups.length > 0 || availableTrips.length > 0;
 
   return (
     <Modal
       open={open}
       onClose={onClose}
       title={editingExpense ? 'Edit Expense' : 'Add Expense'}
-      subtitle="Exact integer-paise splitting with multi-payer and receipt support"
+      subtitle="Exact integer-paise splitting with receipts, multi-currency & recurring rules"
       maxWidth="max-w-2xl"
     >
-      {availableGroups.length === 0 ? (
+      {!hasAnyDestination ? (
         <div className="py-6 text-center space-y-2">
           <p className="text-sm text-slate-600 dark:text-slate-300">
-            Create or join a group before logging an expense.
+            Create or join a group or trip before logging an expense.
           </p>
           <Button variant="outline" onClick={onClose}>
             Close
@@ -522,24 +817,74 @@ export function ExpenseFormModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
-                Group
-              </label>
-              <select
-                value={groupId}
-                disabled={Boolean(editingExpense)}
-                onChange={(e) => setGroupId(e.target.value)}
-                className="w-full h-10 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:opacity-60"
+          {/* Scope switcher (Group vs Trip) when both exist */}
+          {!editingExpense && availableGroups.length > 0 && availableTrips.length > 0 && (
+            <div className="grid grid-cols-2 gap-1.5 p-1 rounded-lg bg-slate-100 dark:bg-slate-800">
+              <button
+                type="button"
+                onClick={() => setTargetScope('group')}
+                className={`flex items-center justify-center gap-1.5 h-9 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                  targetScope === 'group'
+                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
               >
-                {availableGroups.map((g) => (
-                  <option key={g.id} value={g.id}>
-                    {g.name}
-                  </option>
-                ))}
-              </select>
+                <Layers className="w-3.5 h-3.5" />
+                Group Ledger
+              </button>
+              <button
+                type="button"
+                onClick={() => setTargetScope('trip')}
+                className={`flex items-center justify-center gap-1.5 h-9 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                  targetScope === 'trip'
+                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <Plane className="w-3.5 h-3.5" />
+                Trip Mode
+              </button>
             </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            {targetScope === 'trip' ? (
+              <div className="space-y-1.5">
+                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                  Trip
+                </label>
+                <select
+                  value={tripId}
+                  disabled={Boolean(editingExpense)}
+                  onChange={(e) => setTripId(e.target.value)}
+                  className="w-full h-10 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:opacity-60"
+                >
+                  {availableTrips.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} ({t.destination})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                  Group
+                </label>
+                <select
+                  value={groupId}
+                  disabled={Boolean(editingExpense)}
+                  onChange={(e) => setGroupId(e.target.value)}
+                  className="w-full h-10 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:opacity-60"
+                >
+                  {availableGroups.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
@@ -550,7 +895,7 @@ export function ExpenseFormModal({
                 onChange={(e) => setCategory(e.target.value as ExpenseCategory)}
                 className="w-full h-10 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
               >
-                {EXPENSE_CATEGORIES.map((c) => (
+                {categoryOptions.map((c) => (
                   <option key={c} value={c}>
                     {c}
                   </option>
@@ -736,7 +1081,7 @@ export function ExpenseFormModal({
                 onChange={(e) => setSinglePayerUid(e.target.value)}
                 className="w-full h-10 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
               >
-                {groupMembers.map((m) => (
+                {members.map((m) => (
                   <option key={m.uid} value={m.uid}>
                     {m.name} {m.uid === profile?.uid ? '(You)' : ''}
                   </option>
@@ -744,8 +1089,11 @@ export function ExpenseFormModal({
               </select>
             ) : (
               <div className="rounded-lg border border-slate-200 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800">
-                {groupMembers.map((m) => (
-                  <div key={m.uid} className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-3 px-3 py-2.5">
+                {members.map((m) => (
+                  <div
+                    key={m.uid}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-3 px-3 py-2.5"
+                  >
                     <span className="text-sm text-slate-700 dark:text-slate-200 truncate">
                       {m.name} {m.uid === profile?.uid ? '(You)' : ''}
                     </span>
@@ -781,7 +1129,7 @@ export function ExpenseFormModal({
                 {(
                   [
                     { id: 'equal', label: 'Equal' },
-                    { id: 'unequal', label: 'Exact ₹' },
+                    { id: 'unequal', label: currency !== 'INR' ? 'Exact (₹ INR)' : 'Exact ₹' },
                     { id: 'percentage', label: 'Percent %' },
                     { id: 'shares', label: 'Shares' },
                   ] as const
@@ -802,8 +1150,14 @@ export function ExpenseFormModal({
               </div>
             </div>
 
+            {splitMethod === 'unequal' && currency !== 'INR' && totalPaise > 0 && (
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Enter exact member shares in INR (canonical target: {formatINR(totalPaise)}).
+              </p>
+            )}
+
             <div className="rounded-lg border border-slate-200 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800">
-              {groupMembers.map((m) => {
+              {members.map((m) => {
                 const included = selectedParticipants.includes(m.uid);
                 const computedShare = splitResult.shares.find((s) => s.uid === m.uid);
                 return (
@@ -876,69 +1230,98 @@ export function ExpenseFormModal({
           </div>
 
           {/* Receipt & Recurring Options */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1 border-t border-slate-100 dark:border-slate-800">
-            <div className="space-y-2">
-              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
-                Bill receipt image (optional)
-              </label>
-              <div className="flex items-center gap-2">
-                <label className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer">
-                  <Upload className="w-3.5 h-3.5" />
-                  {receiptImage ? 'Replace receipt' : 'Upload receipt'}
-                  <input type="file" accept="image/*" onChange={handleReceiptUpload} className="hidden" />
-                </label>
-                {receiptImage && (
-                  <button
-                    type="button"
-                    onClick={() => setReceiptImage('')}
-                    className="inline-flex items-center gap-1 text-xs text-red-600 dark:text-red-400 hover:underline cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    Remove
-                  </button>
-                )}
-              </div>
-              {receiptImage && (
-                <img
-                  src={receiptImage}
-                  alt="Receipt preview"
-                  className="max-h-40 w-full sm:w-auto rounded-lg border border-slate-200 dark:border-slate-700 object-contain bg-slate-50 dark:bg-slate-950"
-                />
-              )}
-            </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <ReceiptAttachmentControl
+              pendingFile={pendingReceiptFile}
+              existingMetadata={receiptRemoved ? null : existingReceiptMeta}
+              legacyReceiptImage={receiptRemoved ? '' : legacyReceiptImage}
+              uploadProgress={uploadProgress}
+              disabled={submitting}
+              onSelectFile={(file) => {
+                setPendingReceiptFile(file);
+                setReceiptRemoved(false);
+              }}
+              onRemove={() => {
+                setPendingReceiptFile(null);
+                setExistingReceiptMeta(null);
+                setLegacyReceiptImage('');
+                setReceiptRemoved(true);
+              }}
+              onValidationError={(msg) =>
+                showToast('Invalid receipt image', { description: msg, variant: 'error' })
+              }
+            />
 
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer min-h-[36px]">
-                <input
-                  type="checkbox"
-                  checked={isRecurring}
-                  onChange={(e) => setIsRecurring(e.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                />
-                Recurring expense
-              </label>
-              {isRecurring && (
-                <div className="flex items-center gap-2">
-                  <select
-                    value={recurringFrequency}
-                    onChange={(e) => setRecurringFrequency(e.target.value as RecurringFrequency)}
-                    className="h-10 sm:h-9 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2.5 text-xs text-slate-900 dark:text-slate-100"
-                  >
-                    <option value="weekly">Weekly</option>
-                    <option value="monthly">Monthly</option>
-                    <option value="custom">Every N days</option>
-                  </select>
-                  {recurringFrequency === 'custom' && (
-                    <input
-                      type="number"
-                      min="1"
-                      max="365"
-                      value={recurringIntervalDays}
-                      onChange={(e) => setRecurringIntervalDays(e.target.value)}
-                      className="w-20 h-10 sm:h-9 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2.5 text-xs font-mono-nums"
-                    />
-                  )}
+            <div className="space-y-2.5">
+              {targetScope === 'trip' ? (
+                <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/40 p-3 text-xs text-slate-500 dark:text-slate-400">
+                  Recurring schedules apply to permanent Groups. Manage automated bills in the
+                  Expenses &rarr; Recurring tab.
                 </div>
+              ) : (
+                <>
+                  <label className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer min-h-[36px]">
+                    <input
+                      type="checkbox"
+                      checked={isRecurring}
+                      disabled={Boolean(editingExpense)}
+                      onChange={(e) => setIsRecurring(e.target.checked)}
+                      className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 disabled:opacity-50"
+                    />
+                    <Repeat className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                    Make this a recurring group expense
+                  </label>
+                  {editingExpense?.recurringRuleId && (
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Generated from a recurring schedule. Manage future occurrences on the
+                      Expenses page.
+                    </p>
+                  )}
+                  {isRecurring && !editingExpense && (
+                    <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/40 p-3 space-y-2.5">
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={recurringFrequency}
+                          onChange={(e) =>
+                            setRecurringFrequency(e.target.value as RecurringRuleFrequency)
+                          }
+                          className="flex-1 h-9 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2.5 text-xs text-slate-900 dark:text-slate-100"
+                        >
+                          <option value="daily">Daily</option>
+                          <option value="weekly">Weekly</option>
+                          <option value="monthly">Monthly</option>
+                          <option value="yearly">Yearly</option>
+                          <option value="custom">Custom interval (days)</option>
+                        </select>
+                        {recurringFrequency === 'custom' && (
+                          <input
+                            type="number"
+                            min="1"
+                            max="365"
+                            value={recurringIntervalDays}
+                            onChange={(e) => setRecurringIntervalDays(e.target.value)}
+                            aria-label="Interval days"
+                            className="w-20 h-9 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2.5 text-xs font-mono-nums text-slate-900 dark:text-slate-100"
+                          />
+                        )}
+                      </div>
+                      <InputField
+                        label="End date (optional)"
+                        type="date"
+                        value={recurringEndDate}
+                        min={(expenseDate || getTodayIsoDate()).slice(0, 10)}
+                        onChange={(e) => setRecurringEndDate(e.target.value)}
+                      />
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                        Next automated run:{' '}
+                        <span className="font-mono-nums font-medium text-slate-700 dark:text-slate-300">
+                          {recurringPreviewNextDate}
+                        </span>
+                        . Month-end dates (29th–31st) clamp cleanly in shorter months.
+                      </p>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>

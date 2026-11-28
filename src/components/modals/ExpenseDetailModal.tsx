@@ -1,17 +1,24 @@
-import React, { useEffect, useState } from 'react';
-import { Pencil, Trash2, MessageSquare, Send, Repeat } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Pencil, Trash2, MessageSquare, Send, Repeat, ExternalLink } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { useToast } from '../../contexts/ToastContext';
-import type { Expense, ExpenseNote, Group } from '../../types';
+import type { Expense, ExpenseNote, Group, Trip } from '../../types';
 import {
   addExpenseNote,
   deleteExpense,
   deleteExpenseNote,
   subscribeExpenseNotes,
 } from '../../services/expenseService';
+import {
+  addTripExpenseNote,
+  deleteTripExpense,
+  deleteTripExpenseNote,
+  subscribeTripExpenseNotes,
+} from '../../services/tripService';
 import { formatINR, formatOriginalCurrency, isSupportedCurrency } from '../../utils/finance';
 import { formatDateTime, formatRelativeTimestamp } from '../../utils/helpers';
+import { ReceiptImagePreview } from '../ReceiptImagePreview';
 import { Button, Modal } from '../ui/Primitives';
 import { ConfirmModal } from './ConfirmModal';
 
@@ -19,12 +26,14 @@ export function ExpenseDetailModal({
   open,
   onClose,
   group,
+  trip,
   expense,
   onEdit,
 }: {
   open: boolean;
   onClose: () => void;
-  group: Group;
+  group?: Group;
+  trip?: Trip;
   expense: Expense | null;
   onEdit: (expense: Expense) => void;
 }) {
@@ -36,24 +45,34 @@ export function ExpenseDetailModal({
   const [sendingNote, setSendingNote] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [deletingNoteId, setDeletingNoteId] = useState<string | null>(null);
+
+  const scopeName = trip ? trip.name : group?.name || 'Expense';
+  const targetId = trip ? trip.id : group?.id || '';
 
   useEffect(() => {
-    if (!open || !expense) {
+    if (!open || !expense || !targetId) {
       setNotes([]);
       return;
     }
-    const unsub = subscribeExpenseNotes(group.id, expense.id, setNotes);
+    const unsub = trip
+      ? subscribeTripExpenseNotes(trip.id, expense.id, setNotes)
+      : subscribeExpenseNotes(targetId, expense.id, setNotes);
     return () => unsub();
-  }, [open, group.id, expense?.id]);
+  }, [open, trip, targetId, expense?.id]);
 
-  if (!expense) return null;
+  if (!expense || (!group && !trip)) return null;
 
   const handleAddNote = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!profile || !noteInput.trim()) return;
     setSendingNote(true);
     try {
-      await addExpenseNote(profile, group, expense, noteInput);
+      if (trip) {
+        await addTripExpenseNote(profile, trip, expense, noteInput);
+      } else if (group) {
+        await addExpenseNote(profile, group, expense, noteInput);
+      }
       setNoteInput('');
     } catch (err: unknown) {
       showToast('Could not add note', {
@@ -69,7 +88,11 @@ export function ExpenseDetailModal({
     if (!profile) return;
     setDeleting(true);
     try {
-      await deleteExpense(profile, group, expense);
+      if (trip) {
+        await deleteTripExpense(profile, trip, expense);
+      } else if (group) {
+        await deleteExpense(profile, group, expense);
+      }
       showToast('Expense deleted', { variant: 'success' });
       setConfirmDeleteOpen(false);
       onClose();
@@ -89,7 +112,7 @@ export function ExpenseDetailModal({
         open={open}
         onClose={onClose}
         title={expense.title}
-        subtitle={`${expense.category} · ${formatDateTime(expense.expenseDate)}`}
+        subtitle={`${scopeName} · ${expense.category} · ${formatDateTime(expense.expenseDate)}`}
         maxWidth="max-w-xl"
       >
         <div className="space-y-5">
@@ -119,11 +142,14 @@ export function ExpenseDetailModal({
                   {expense.tags.map((t) => `#${t}`).join(' · ')}
                 </p>
               )}
-              {expense.isRecurring && (
-                <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
+              {(expense.isRecurring || expense.recurringRuleId) && (
+                <p className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
                   <Repeat className="w-3.5 h-3.5" />
-                  Recurring ({expense.recurringFrequency})
-                  {expense.nextOccurrenceDate ? ` · Next: ${expense.nextOccurrenceDate}` : ''}
+                  <span>
+                    {expense.recurringRuleId ? 'Auto-logged from recurring rule' : 'Recurring'} (
+                    {expense.recurringFrequency})
+                    {expense.occurrenceKey ? ` · ${expense.occurrenceKey}` : ''}
+                  </span>
                 </p>
               )}
             </div>
@@ -196,22 +222,11 @@ export function ExpenseDetailModal({
             </div>
           </div>
 
-          {expense.receiptImage && (
-            <div className="space-y-2">
-              <h4 className="text-xs font-medium text-slate-500 dark:text-slate-400">
-                Attached bill receipt
-              </h4>
-              <div className="rounded-lg border border-slate-200 dark:border-slate-800 overflow-hidden bg-slate-50 dark:bg-slate-950">
-                <img
-                  src={expense.receiptImage}
-                  alt="Expense receipt"
-                  className="max-h-72 w-full object-contain"
-                />
-              </div>
-            </div>
-          )}
+          <ReceiptImagePreview
+            receiptMetadata={expense.receiptMetadata}
+            legacyReceiptImage={expense.receiptImage}
+          />
 
-          {/* Expense Discussion Notes */}
           <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-3">
             <h4 className="text-xs font-medium text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
               <MessageSquare className="w-3.5 h-3.5" />
@@ -239,9 +254,27 @@ export function ExpenseDetailModal({
                     {n.authorUid === profile?.uid && (
                       <button
                         type="button"
-                        onClick={() => deleteExpenseNote(group.id, expense.id, n.id)}
+                        disabled={deletingNoteId === n.id}
+                        onClick={async () => {
+                          if (deletingNoteId) return;
+                          setDeletingNoteId(n.id);
+                          try {
+                            if (trip) {
+                              await deleteTripExpenseNote(trip.id, expense.id, n.id);
+                            } else if (group) {
+                              await deleteExpenseNote(group.id, expense.id, n.id);
+                            }
+                          } catch (err: unknown) {
+                            showToast('Could not delete note', {
+                              description: err instanceof Error ? err.message : 'Try again.',
+                              variant: 'error',
+                            });
+                          } finally {
+                            setDeletingNoteId(null);
+                          }
+                        }}
                         aria-label="Delete note"
-                        className="text-slate-400 hover:text-red-500 p-1 shrink-0 cursor-pointer"
+                        className="text-slate-400 hover:text-red-500 p-1 shrink-0 cursor-pointer disabled:opacity-50"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -260,7 +293,13 @@ export function ExpenseDetailModal({
                 placeholder="Add a note or question about this bill..."
                 className="flex-1 min-w-0 h-10 sm:h-9 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
               />
-              <Button type="submit" size="sm" loading={sendingNote} disabled={!noteInput.trim()} className="w-full sm:w-auto">
+              <Button
+                type="submit"
+                size="sm"
+                loading={sendingNote}
+                disabled={!noteInput.trim()}
+                className="w-full sm:w-auto"
+              >
                 <Send className="w-3.5 h-3.5" />
                 Send
               </Button>
@@ -274,7 +313,7 @@ export function ExpenseDetailModal({
         onClose={() => setConfirmDeleteOpen(false)}
         onConfirm={handleDeleteExpense}
         title="Delete expense?"
-        message={`Deleting "${expense.title}" (${formatAmount(expense.amountPaise)}) will immediately recalculate all balances in ${group.name}.`}
+        message={`Deleting "${expense.title}" (${formatAmount(expense.amountPaise)}) will immediately recalculate all balances in ${scopeName}.`}
         confirmLabel="Delete Expense"
         loading={deleting}
       />

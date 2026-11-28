@@ -10,11 +10,20 @@ import type {
   Group,
   GroupActivity,
   PublicProfile,
+  RecurringExpenseRule,
   Settlement,
+  Trip,
 } from '../types';
 import { subscribeGroups, subscribeGroupActivities } from '../services/groupService';
 import { subscribeGroupExpenses } from '../services/expenseService';
 import { subscribeGroupSettlements } from '../services/settlementService';
+import { subscribeGroupRecurringRules } from '../services/recurringService';
+import {
+  subscribeTripActivities,
+  subscribeTripExpenses,
+  subscribeTrips,
+  subscribeTripSettlements,
+} from '../services/tripService';
 import { subscribeFriendRequests, subscribeFriendships } from '../services/friendService';
 import { subscribeNotifications } from '../services/notificationService';
 import { getPublicProfiles } from '../services/userService';
@@ -29,6 +38,13 @@ interface AppDataContextValue {
   expensesByGroup: Record<string, Expense[]>;
   settlementsByGroup: Record<string, Settlement[]>;
   activitiesByGroup: Record<string, GroupActivity[]>;
+  recurringByGroup: Record<string, RecurringExpenseRule[]>;
+  trips: Trip[];
+  activeTrips: Trip[];
+  archivedTrips: Trip[];
+  expensesByTrip: Record<string, Expense[]>;
+  settlementsByTrip: Record<string, Settlement[]>;
+  activitiesByTrip: Record<string, GroupActivity[]>;
   friendships: Friendship[];
   friendRequests: FriendRequest[];
   acceptedFriendUids: string[];
@@ -45,10 +61,10 @@ interface AppDataContextValue {
     totalPaidByMePaise: number;
     totalOwedToMePaise: number;
     totalIOwePaise: number;
-    pendingSettlements: Array<Settlement & { groupName: string }>;
-    recentExpenses: Array<Expense & { groupName: string }>;
-    recentSettlements: Array<Settlement & { groupName: string }>;
-    recentActivities: Array<GroupActivity & { groupName: string }>;
+    pendingSettlements: Array<Settlement & { groupName: string; kind?: 'group' | 'trip' }>;
+    recentExpenses: Array<Expense & { groupName: string; kind?: 'group' | 'trip' }>;
+    recentSettlements: Array<Settlement & { groupName: string; kind?: 'group' | 'trip' }>;
+    recentActivities: Array<GroupActivity & { groupName: string; kind?: 'group' | 'trip' }>;
   };
   refreshProfiles: (uids: string[], forceRefresh?: boolean) => Promise<void>;
 }
@@ -61,6 +77,13 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   const [expensesByGroup, setExpensesByGroup] = useState<Record<string, Expense[]>>({});
   const [settlementsByGroup, setSettlementsByGroup] = useState<Record<string, Settlement[]>>({});
   const [activitiesByGroup, setActivitiesByGroup] = useState<Record<string, GroupActivity[]>>({});
+  const [recurringByGroup, setRecurringByGroup] = useState<Record<string, RecurringExpenseRule[]>>({});
+
+  const [trips, setTrips] = useState<Trip[]>([]);
+  const [expensesByTrip, setExpensesByTrip] = useState<Record<string, Expense[]>>({});
+  const [settlementsByTrip, setSettlementsByTrip] = useState<Record<string, Settlement[]>>({});
+  const [activitiesByTrip, setActivitiesByTrip] = useState<Record<string, GroupActivity[]>>({});
+
   const [friendships, setFriendships] = useState<Friendship[]>([]);
   const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([]);
   const [profilesMap, setProfilesMap] = useState<Record<string, PublicProfile>>({});
@@ -93,21 +116,16 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     setSyncEpoch((e) => e + 1);
   }, []);
 
-  // Monitor browser online/offline state and delayed offline-sync errors
   useEffect(() => {
     const onOnline = () => {
       setIsOnline(true);
       setLastSyncError(null);
       setSyncEpoch((e) => e + 1);
     };
-    const onOffline = () => {
-      setIsOnline(false);
-    };
+    const onOffline = () => setIsOnline(false);
     const onSyncError = (ev: Event) => {
       const detail = (ev as CustomEvent<{ message?: string }>).detail;
-      if (detail?.message) {
-        setLastSyncError(detail.message);
-      }
+      if (detail?.message) setLastSyncError(detail.message);
     };
     window.addEventListener('online', onOnline);
     window.addEventListener('offline', onOffline);
@@ -119,26 +137,27 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Monitor Firestore snapshot sync status
   useEffect(() => {
     if (!profile?.uid) return;
     setSnapshotsSynced(false);
-    const unsub = onSnapshotsInSync(db, () => {
-      setSnapshotsSynced(true);
-    });
+    const unsub = onSnapshotsInSync(db, () => setSnapshotsSynced(true));
     return () => unsub();
   }, [profile?.uid, syncEpoch]);
 
-  // Subscribe to groups, friendships, and notifications
   useEffect(() => {
     if (!profile?.uid) {
       setGroups([]);
+      setTrips([]);
       setFriendships([]);
       setFriendRequests([]);
       setNotifications([]);
       setExpensesByGroup({});
       setSettlementsByGroup({});
       setActivitiesByGroup({});
+      setRecurringByGroup({});
+      setExpensesByTrip({});
+      setSettlementsByTrip({});
+      setActivitiesByTrip({});
       setLastSyncError(null);
       setLoadingData(false);
       return;
@@ -147,8 +166,9 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     setLoadingData(true);
     setLastSyncError(null);
     let groupsReady = false;
+    let tripsReady = false;
     const markReady = () => {
-      if (groupsReady) setLoadingData(false);
+      if (groupsReady && tripsReady) setLoadingData(false);
     };
     const onListenerError = (err: Error) => {
       setLastSyncError(err.message || 'Real-time sync interrupted.');
@@ -166,33 +186,29 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       (pending) => setPendingKey('groups', pending)
     );
 
-    const unsubFriends = subscribeFriendships(
+    const unsubTrips = subscribeTrips(
       profile.uid,
       (list) => {
-        setFriendships(list);
+        setTrips(list);
+        tripsReady = true;
+        markReady();
       },
-      onListenerError
+      onListenerError,
+      (pending) => setPendingKey('trips', pending)
     );
 
-    const unsubFriendRequests = subscribeFriendRequests(
-      profile.uid,
-      (list) => {
-        setFriendRequests(list);
-      },
-      onListenerError
-    );
-
+    const unsubFriends = subscribeFriendships(profile.uid, setFriendships, onListenerError);
+    const unsubFriendRequests = subscribeFriendRequests(profile.uid, setFriendRequests, onListenerError);
     const unsubNotifs = subscribeNotifications(
       profile.uid,
-      (list) => {
-        setNotifications(list);
-      },
+      setNotifications,
       onListenerError,
       (pending) => setPendingKey('notifications', pending)
     );
 
     return () => {
       unsubGroups();
+      unsubTrips();
       unsubFriends();
       unsubFriendRequests();
       unsubNotifs();
@@ -201,40 +217,30 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
 
   const groupIdsKey = useMemo(() => groups.map((g) => g.id).join(','), [groups]);
 
-  // Subscribe to expenses, settlements, and activities for each accessible group
   useEffect(() => {
     if (!profile?.uid || groups.length === 0) {
       setExpensesByGroup({});
       setSettlementsByGroup({});
       setActivitiesByGroup({});
+      setRecurringByGroup({});
       return;
     }
 
     const unsubs: Unsubscribe[] = [];
     const currentIds = new Set(groups.map((g) => g.id));
 
-    // Clean stale group keys
-    setExpensesByGroup((prev) => {
-      const next: Record<string, Expense[]> = {};
+    const filterMap = <T,>(prev: Record<string, T[]>) => {
+      const next: Record<string, T[]> = {};
       for (const id of Object.keys(prev)) {
         if (currentIds.has(id)) next[id] = prev[id];
       }
       return next;
-    });
-    setSettlementsByGroup((prev) => {
-      const next: Record<string, Settlement[]> = {};
-      for (const id of Object.keys(prev)) {
-        if (currentIds.has(id)) next[id] = prev[id];
-      }
-      return next;
-    });
-    setActivitiesByGroup((prev) => {
-      const next: Record<string, GroupActivity[]> = {};
-      for (const id of Object.keys(prev)) {
-        if (currentIds.has(id)) next[id] = prev[id];
-      }
-      return next;
-    });
+    };
+
+    setExpensesByGroup(filterMap);
+    setSettlementsByGroup(filterMap);
+    setActivitiesByGroup(filterMap);
+    setRecurringByGroup(filterMap);
 
     const onGroupError = (err: Error) => {
       setLastSyncError(err.message || 'Group ledger sync interrupted.');
@@ -244,9 +250,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       unsubs.push(
         subscribeGroupExpenses(
           g.id,
-          (items) => {
-            setExpensesByGroup((prev) => ({ ...prev, [g.id]: items }));
-          },
+          (items) => setExpensesByGroup((prev) => ({ ...prev, [g.id]: items })),
           onGroupError,
           (pending) => setPendingKey(`expenses:${g.id}`, pending)
         )
@@ -254,9 +258,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       unsubs.push(
         subscribeGroupSettlements(
           g.id,
-          (items) => {
-            setSettlementsByGroup((prev) => ({ ...prev, [g.id]: items }));
-          },
+          (items) => setSettlementsByGroup((prev) => ({ ...prev, [g.id]: items })),
           onGroupError,
           (pending) => setPendingKey(`settlements:${g.id}`, pending)
         )
@@ -264,9 +266,14 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       unsubs.push(
         subscribeGroupActivities(
           g.id,
-          (items) => {
-            setActivitiesByGroup((prev) => ({ ...prev, [g.id]: items }));
-          },
+          (items) => setActivitiesByGroup((prev) => ({ ...prev, [g.id]: items })),
+          onGroupError
+        )
+      );
+      unsubs.push(
+        subscribeGroupRecurringRules(
+          g.id,
+          (items) => setRecurringByGroup((prev) => ({ ...prev, [g.id]: items })),
           onGroupError
         )
       );
@@ -277,19 +284,74 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     };
   }, [profile?.uid, groupIdsKey, syncEpoch, setPendingKey]);
 
-  // Load public profiles for all friends, friend requests, and group members
+  const tripIdsKey = useMemo(() => trips.map((t) => t.id).join(','), [trips]);
+
+  useEffect(() => {
+    if (!profile?.uid || trips.length === 0) {
+      setExpensesByTrip({});
+      setSettlementsByTrip({});
+      setActivitiesByTrip({});
+      return;
+    }
+
+    const unsubs: Unsubscribe[] = [];
+    const currentIds = new Set(trips.map((t) => t.id));
+
+    const filterMap = <T,>(prev: Record<string, T[]>) => {
+      const next: Record<string, T[]> = {};
+      for (const id of Object.keys(prev)) {
+        if (currentIds.has(id)) next[id] = prev[id];
+      }
+      return next;
+    };
+
+    setExpensesByTrip(filterMap);
+    setSettlementsByTrip(filterMap);
+    setActivitiesByTrip(filterMap);
+
+    const onTripError = (err: Error) => {
+      setLastSyncError(err.message || 'Trip sync interrupted.');
+    };
+
+    for (const t of trips) {
+      unsubs.push(
+        subscribeTripExpenses(
+          t.id,
+          (items) => setExpensesByTrip((prev) => ({ ...prev, [t.id]: items })),
+          onTripError,
+          (pending) => setPendingKey(`tripExpenses:${t.id}`, pending)
+        )
+      );
+      unsubs.push(
+        subscribeTripSettlements(
+          t.id,
+          (items) => setSettlementsByTrip((prev) => ({ ...prev, [t.id]: items })),
+          onTripError,
+          (pending) => setPendingKey(`tripSettlements:${t.id}`, pending)
+        )
+      );
+      unsubs.push(
+        subscribeTripActivities(
+          t.id,
+          (items) => setActivitiesByTrip((prev) => ({ ...prev, [t.id]: items })),
+          onTripError
+        )
+      );
+    }
+
+    return () => {
+      unsubs.forEach((u) => u());
+    };
+  }, [profile?.uid, tripIdsKey, syncEpoch, setPendingKey]);
+
   useEffect(() => {
     if (!profile?.uid) return;
     const uids = new Set<string>([profile.uid]);
-    for (const f of friendships) {
-      f.users.forEach((u) => uids.add(u));
-    }
-    for (const r of friendRequests) {
-      r.users.forEach((u) => uids.add(u));
-    }
-    for (const g of groups) {
-      g.memberUids.forEach((u) => uids.add(u));
-    }
+    for (const f of friendships) f.users.forEach((u) => uids.add(u));
+    for (const r of friendRequests) r.users.forEach((u) => uids.add(u));
+    for (const g of groups) g.memberUids.forEach((u) => uids.add(u));
+    for (const t of trips) t.participantUids.forEach((u) => uids.add(u));
+
     const missing = Array.from(uids).filter((u) => !profilesMap[u]);
     if (missing.length === 0) return;
 
@@ -298,7 +360,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         setProfilesMap((prev) => ({ ...prev, ...loaded }));
       }
     });
-  }, [profile?.uid, friendships, friendRequests, groups]);
+  }, [profile?.uid, friendships, friendRequests, groups, trips]);
 
   const refreshProfiles = useCallback(async (uids: string[], forceRefresh = false) => {
     if (forceRefresh) {
@@ -334,6 +396,9 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   const activeGroups = useMemo(() => groups.filter((g) => !g.isArchived), [groups]);
   const archivedGroups = useMemo(() => groups.filter((g) => g.isArchived), [groups]);
 
+  const activeTrips = useMemo(() => trips.filter((t) => !t.isArchived), [trips]);
+  const archivedTrips = useMemo(() => trips.filter((t) => t.isArchived), [trips]);
+
   const acceptedFriendUids = useMemo(() => {
     if (!profile?.uid) return [];
     return friendships
@@ -350,15 +415,16 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   const summary = useMemo(() => {
     const uid = profile?.uid || '';
     const groupMap = new Map(groups.map((g) => [g.id, g]));
+    const tripMap = new Map(trips.map((t) => [t.id, t]));
 
     let totalAccessibleExpensesPaise = 0;
     let totalPaidByMePaise = 0;
     let totalOwedToMePaise = 0;
     let totalIOwePaise = 0;
 
-    const allExpenses: Array<Expense & { groupName: string }> = [];
-    const allSettlements: Array<Settlement & { groupName: string }> = [];
-    const allActivities: Array<GroupActivity & { groupName: string }> = [];
+    const allExpenses: Array<Expense & { groupName: string; kind?: 'group' | 'trip' }> = [];
+    const allSettlements: Array<Settlement & { groupName: string; kind?: 'group' | 'trip' }> = [];
+    const allActivities: Array<GroupActivity & { groupName: string; kind?: 'group' | 'trip' }> = [];
 
     for (const g of groups) {
       const exps = expensesByGroup[g.id] || [];
@@ -375,34 +441,47 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       const myBalance = memberBalances.find((m) => m.uid === uid);
       if (myBalance) {
         totalPaidByMePaise += myBalance.expensePaidPaise;
-        if (myBalance.netBalancePaise > 0) {
-          totalOwedToMePaise += myBalance.netBalancePaise;
-        } else if (myBalance.netBalancePaise < 0) {
-          totalIOwePaise += Math.abs(myBalance.netBalancePaise);
-        }
+        if (myBalance.netBalancePaise > 0) totalOwedToMePaise += myBalance.netBalancePaise;
+        else if (myBalance.netBalancePaise < 0) totalIOwePaise += Math.abs(myBalance.netBalancePaise);
       }
 
-      exps.forEach((e) => allExpenses.push({ ...e, groupName: g.name }));
-      sts.forEach((s) => allSettlements.push({ ...s, groupName: g.name }));
-      acts.forEach((a) => allActivities.push({ ...a, groupName: g.name }));
+      exps.forEach((e) => allExpenses.push({ ...e, groupName: g.name, kind: 'group' }));
+      sts.forEach((s) => allSettlements.push({ ...s, groupName: g.name, kind: 'group' }));
+      acts.forEach((a) => allActivities.push({ ...a, groupName: g.name, kind: 'group' }));
+    }
+
+    for (const t of trips) {
+      const exps = expensesByTrip[t.id] || [];
+      const sts = settlementsByTrip[t.id] || [];
+      const acts = activitiesByTrip[t.id] || [];
+
+      const { totalExpenditurePaise, memberBalances } = computeGroupBalances(
+        t.participantNames,
+        exps,
+        sts
+      );
+
+      totalAccessibleExpensesPaise += totalExpenditurePaise;
+      const myBalance = memberBalances.find((m) => m.uid === uid);
+      if (myBalance) {
+        totalPaidByMePaise += myBalance.expensePaidPaise;
+        if (myBalance.netBalancePaise > 0) totalOwedToMePaise += myBalance.netBalancePaise;
+        else if (myBalance.netBalancePaise < 0) totalIOwePaise += Math.abs(myBalance.netBalancePaise);
+      }
+
+      exps.forEach((e) => allExpenses.push({ ...e, groupName: t.name, kind: 'trip' }));
+      sts.forEach((s) => allSettlements.push({ ...s, groupName: t.name, kind: 'trip' }));
+      acts.forEach((a) => allActivities.push({ ...a, groupName: t.name, kind: 'trip' }));
     }
 
     allExpenses.sort((a, b) => b.expenseDate.localeCompare(a.expenseDate));
-    allSettlements.sort((a, b) => {
-      const ta = a.createdAt?.toMillis?.() ?? 0;
-      const tb = b.createdAt?.toMillis?.() ?? 0;
-      return tb - ta;
-    });
-    allActivities.sort((a, b) => {
-      const ta = a.createdAt?.toMillis?.() ?? 0;
-      const tb = b.createdAt?.toMillis?.() ?? 0;
-      return tb - ta;
-    });
+    allSettlements.sort((a, b) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0));
+    allActivities.sort((a, b) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0));
 
     const pendingSettlements = allSettlements.filter(
       (s) =>
         (s.status === 'pending' || s.status === 'awaiting_confirmation' || s.status === 'disputed') &&
-        (s.fromUid === uid || s.toUid === uid || groupMap.has(s.groupId))
+        (s.fromUid === uid || s.toUid === uid || groupMap.has(s.groupId) || tripMap.has(s.groupId))
     );
 
     return {
@@ -415,7 +494,17 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       recentSettlements: allSettlements.slice(0, 10),
       recentActivities: allActivities.slice(0, 20),
     };
-  }, [groups, expensesByGroup, settlementsByGroup, activitiesByGroup, profile?.uid]);
+  }, [
+    groups,
+    expensesByGroup,
+    settlementsByGroup,
+    activitiesByGroup,
+    trips,
+    expensesByTrip,
+    settlementsByTrip,
+    activitiesByTrip,
+    profile?.uid,
+  ]);
 
   const contextValue = useMemo<AppDataContextValue>(
     () => ({
@@ -425,6 +514,13 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       expensesByGroup,
       settlementsByGroup,
       activitiesByGroup,
+      recurringByGroup,
+      trips,
+      activeTrips,
+      archivedTrips,
+      expensesByTrip,
+      settlementsByTrip,
+      activitiesByTrip,
       friendships,
       friendRequests,
       acceptedFriendUids,
@@ -446,6 +542,13 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       expensesByGroup,
       settlementsByGroup,
       activitiesByGroup,
+      recurringByGroup,
+      trips,
+      activeTrips,
+      archivedTrips,
+      expensesByTrip,
+      settlementsByTrip,
+      activitiesByTrip,
       friendships,
       friendRequests,
       acceptedFriendUids,
@@ -462,11 +565,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     ]
   );
 
-  return (
-    <AppDataContext.Provider value={contextValue}>
-      {children}
-    </AppDataContext.Provider>
-  );
+  return <AppDataContext.Provider value={contextValue}>{children}</AppDataContext.Provider>;
 }
 
 export function useAppData() {

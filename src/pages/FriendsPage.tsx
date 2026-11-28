@@ -293,8 +293,15 @@ export function FriendsPage() {
 
   const copyLink = async (token: string) => {
     const url = buildFriendInviteUrl(token);
-    await navigator.clipboard.writeText(url);
-    showToast('Friend invite link copied', { variant: 'success' });
+    try {
+      await navigator.clipboard.writeText(url);
+      showToast('Friend invite link copied', { variant: 'success' });
+    } catch {
+      showToast('Clipboard access failed', {
+        description: 'Use Share or copy the invitation URL manually.',
+        variant: 'error',
+      });
+    }
   };
 
   const handleNativeShareFriend = async (token: string) => {

@@ -171,7 +171,50 @@
     },
     "Expense": {
       "title": "Expense",
-      "description": "Group expense with integer paise splitting, multi-payer support, receipt image, and recurring schedule.",
+      "description": "Group or trip expense with integer paise splitting, multi-payer support, Firebase Storage receipt metadata, and recurring rule links.",
+      "type": "object",
+      "properties": {
+        "groupId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "tripId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "description": { "type": "string", "maxLength": 500 },
+        "amountPaise": { "type": "integer" },
+        "currency": { "type": "string", "enum": ["INR", "USD", "EUR", "GBP", "AED", "SGD", "THB"] },
+        "originalAmountMinor": { "type": "integer" },
+        "exchangeRateToInr": { "type": "number" },
+        "tags": { "type": "array" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "Food & Drinks", "Transport", "Accommodation", "Shopping",
+            "Entertainment", "Groceries", "Bills", "Travel", "Other",
+            "Food", "Restaurant", "Hotel", "Clubbing", "Fuel", "Tickets"
+          ]
+        },
+        "expenseDate": { "type": "string", "minLength": 4, "maxLength": 40 },
+        "splitMethod": { "type": "string", "enum": ["equal", "unequal", "percentage", "shares"] },
+        "payers": { "type": "array" },
+        "shares": { "type": "array" },
+        "participantUids": { "type": "array" },
+        "payerUids": { "type": "array" },
+        "receiptImage": { "type": "string", "maxLength": 450000 },
+        "receiptMetadata": { "type": "object" },
+        "isRecurring": { "type": "boolean" },
+        "recurringFrequency": { "type": "string", "enum": ["none", "daily", "weekly", "monthly", "yearly", "custom"] },
+        "recurringIntervalDays": { "type": "integer" },
+        "nextOccurrenceDate": { "type": "string", "maxLength": 40 },
+        "recurringRuleId": { "type": "string", "maxLength": 128 },
+        "occurrenceKey": { "type": "string", "maxLength": 160 },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "updatedBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["groupId", "title", "amountPaise", "category", "expenseDate", "splitMethod", "payers", "shares", "participantUids", "payerUids", "isRecurring", "recurringFrequency", "createdBy", "updatedBy", "createdAt", "updatedAt"]
+    },
+    "RecurringExpenseRule": {
+      "title": "RecurringExpenseRule",
+      "description": "Recurring expense schedule rule processed automatically by Firebase Cloud Functions.",
       "type": "object",
       "properties": {
         "groupId": { "type": "string", "minLength": 1, "maxLength": 128 },
@@ -184,25 +227,85 @@
         "tags": { "type": "array" },
         "category": {
           "type": "string",
-          "enum": ["Food", "Restaurant", "Travel", "Hotel", "Clubbing", "Shopping", "Entertainment", "Transport", "Fuel", "Tickets", "Other"]
+          "enum": [
+            "Food & Drinks", "Transport", "Accommodation", "Shopping",
+            "Entertainment", "Groceries", "Bills", "Travel", "Other",
+            "Food", "Restaurant", "Hotel", "Clubbing", "Fuel", "Tickets"
+          ]
         },
-        "expenseDate": { "type": "string", "minLength": 4, "maxLength": 40 },
         "splitMethod": { "type": "string", "enum": ["equal", "unequal", "percentage", "shares"] },
         "payers": { "type": "array" },
         "shares": { "type": "array" },
         "participantUids": { "type": "array" },
         "payerUids": { "type": "array" },
-        "receiptImage": { "type": "string", "maxLength": 450000 },
-        "isRecurring": { "type": "boolean" },
-        "recurringFrequency": { "type": "string", "enum": ["none", "weekly", "monthly", "custom"] },
-        "recurringIntervalDays": { "type": "integer" },
-        "nextOccurrenceDate": { "type": "string", "maxLength": 40 },
+        "frequency": { "type": "string", "enum": ["daily", "weekly", "monthly", "yearly", "custom"] },
+        "intervalDays": { "type": "integer" },
+        "anchorDayOfMonth": { "type": "integer" },
+        "monthEndPolicy": { "type": "string", "enum": ["clamp_last_day"] },
+        "startDate": { "type": "string", "minLength": 10, "maxLength": 20 },
+        "endDate": { "type": "string", "maxLength": 20 },
+        "nextOccurrenceDate": { "type": "string", "minLength": 10, "maxLength": 20 },
+        "status": { "type": "string", "enum": ["active", "paused", "cancelled", "completed"] },
+        "generatedCount": { "type": "integer" },
+        "lastGeneratedDate": { "type": "string", "maxLength": 20 },
+        "lastGeneratedAt": { "type": "string", "format": "date-time" },
         "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
         "updatedBy": { "type": "string", "minLength": 1, "maxLength": 128 },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["groupId", "title", "amountPaise", "category", "expenseDate", "splitMethod", "payers", "shares", "participantUids", "payerUids", "isRecurring", "recurringFrequency", "createdBy", "updatedBy", "createdAt", "updatedAt"]
+      "required": ["groupId", "title", "amountPaise", "category", "splitMethod", "payers", "shares", "participantUids", "payerUids", "frequency", "intervalDays", "anchorDayOfMonth", "monthEndPolicy", "startDate", "nextOccurrenceDate", "status", "generatedCount", "createdBy", "updatedBy", "createdAt", "updatedAt"]
+    },
+    "Trip": {
+      "title": "Trip",
+      "description": "Shared travel trip ledger with budgets, destination, equal participant permissions, and optional individual member budgets.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "destination": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 500 },
+        "coverImage": { "type": "string", "maxLength": 350000 },
+        "startDate": { "type": "string", "maxLength": 20 },
+        "endDate": { "type": "string", "maxLength": 20 },
+        "currency": { "type": "string", "enum": ["INR", "USD", "EUR", "GBP", "AED", "SGD", "THB"] },
+        "exchangeRateToInr": { "type": "number" },
+        "exchangeRateUpdatedAt": { "type": "string", "maxLength": 40 },
+        "budgetPaise": { "type": "integer" },
+        "memberBudgetsPaise": { "type": "object" },
+        "isArchived": { "type": "boolean" },
+        "participantUids": { "type": "array" },
+        "participantNames": { "type": "object" },
+        "participantEmails": { "type": "object" },
+        "participantJoinedAt": { "type": "object" },
+        "lastJoinToken": { "type": "string", "maxLength": 128 },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "destination", "description", "currency", "exchangeRateToInr", "budgetPaise", "isArchived", "participantUids", "participantNames", "createdBy", "createdAt", "updatedAt"]
+    },
+    "TripInvite": {
+      "title": "TripInvite",
+      "description": "Shareable trip invitation token with expiration, revocation state, and usage caps.",
+      "type": "object",
+      "properties": {
+        "token": { "type": "string", "minLength": 6, "maxLength": 128 },
+        "tripId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "tripName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "destination": { "type": "string", "maxLength": 100 },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdByName": { "type": "string", "maxLength": 80 },
+        "status": { "type": "string", "enum": ["active", "revoked"] },
+        "revokedBy": { "type": "string", "maxLength": 128 },
+        "revokedAt": { "type": "string", "format": "date-time" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "maxUses": { "type": "integer" },
+        "usesCount": { "type": "integer" },
+        "usedBy": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["token", "tripId", "tripName", "createdBy", "expiresAt", "maxUses", "usesCount", "usedBy", "createdAt", "updatedAt"]
     },
     "ExpenseNote": {
       "title": "ExpenseNote",
@@ -241,7 +344,7 @@
     },
     "GroupActivity": {
       "title": "GroupActivity",
-      "description": "Audit log entry of actions inside a group.",
+      "description": "Audit log entry of actions inside a group or trip.",
       "type": "object",
       "properties": {
         "groupId": { "type": "string", "minLength": 1, "maxLength": 128 },
@@ -314,6 +417,10 @@
       "schema": { "$ref": "#/entities/ExpenseNote" },
       "description": "Discussion notes on an expense."
     },
+    "/groups/{groupId}/recurringExpenses/{ruleId}": {
+      "schema": { "$ref": "#/entities/RecurringExpenseRule" },
+      "description": "Recurring expense rules within a group."
+    },
     "/groups/{groupId}/settlements/{settlementId}": {
       "schema": { "$ref": "#/entities/Settlement" },
       "description": "Payment settlement records within a group."
@@ -329,6 +436,34 @@
     "/groups/{groupId}/emailInvites/{inviteId}": {
       "schema": { "$ref": "#/entities/GroupEmailInvite" },
       "description": "Tracked email invitations within a group."
+    },
+    "/trips/{tripId}": {
+      "schema": { "$ref": "#/entities/Trip" },
+      "description": "Shared travel trips with destination, dates, overall budget, and equal participant permissions."
+    },
+    "/tripInvites/{token}": {
+      "schema": { "$ref": "#/entities/TripInvite" },
+      "description": "Shareable trip invitation tokens."
+    },
+    "/trips/{tripId}/expenses/{expenseId}": {
+      "schema": { "$ref": "#/entities/Expense" },
+      "description": "Expenses within a trip."
+    },
+    "/trips/{tripId}/expenses/{expenseId}/notes/{noteId}": {
+      "schema": { "$ref": "#/entities/ExpenseNote" },
+      "description": "Discussion notes on a trip expense."
+    },
+    "/trips/{tripId}/settlements/{settlementId}": {
+      "schema": { "$ref": "#/entities/Settlement" },
+      "description": "Payment settlement records within a trip."
+    },
+    "/trips/{tripId}/activities/{activityId}": {
+      "schema": { "$ref": "#/entities/GroupActivity" },
+      "description": "Activity log entries within a trip."
+    },
+    "/trips/{tripId}/invites/{token}": {
+      "schema": { "$ref": "#/entities/TripInvite" },
+      "description": "Trip-scoped mirror of invitation links visible to all equal-permission trip participants."
     },
     "/notifications/{notificationId}": {
       "schema": { "$ref": "#/entities/Notification" },

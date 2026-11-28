@@ -25,12 +25,14 @@ import type {
   ExpensePayer,
   ExpenseShare,
   Group,
+  ReceiptMetadata,
   RecurringFrequency,
   SplitMethod,
   UserPrivateProfile,
 } from '../types';
 import { formatINR, formatOriginalCurrency, normalizeExpenseTag } from '../utils/finance';
 import { notifyGroupMembers } from './notificationService';
+import { deleteReceiptObject } from './storageService';
 
 export function subscribeGroupExpenses(
   groupId: string,
@@ -93,6 +95,7 @@ export function subscribeExpenseNotes(
 }
 
 export interface ExpenseUpsertPayload {
+  expenseId?: string;
   title: string;
   description: string;
   amountPaise: number;
@@ -106,10 +109,13 @@ export interface ExpenseUpsertPayload {
   payers: ExpensePayer[];
   shares: ExpenseShare[];
   receiptImage?: string;
+  receiptMetadata?: ReceiptMetadata | null;
   isRecurring: boolean;
   recurringFrequency: RecurringFrequency;
   recurringIntervalDays?: number;
   nextOccurrenceDate?: string;
+  recurringRuleId?: string;
+  occurrenceKey?: string;
 }
 
 export async function addExpense(
@@ -117,7 +123,9 @@ export async function addExpense(
   group: Group,
   payload: ExpenseUpsertPayload
 ): Promise<{ id: string; queuedOffline: boolean }> {
-  const expRef = doc(collection(db, 'groups', group.id, 'expenses'));
+  const expRef = payload.expenseId
+    ? doc(db, 'groups', group.id, 'expenses', payload.expenseId)
+    : doc(collection(db, 'groups', group.id, 'expenses'));
   const payerUids = Array.from(new Set(payload.payers.map((p) => p.uid)));
   const participantUids = Array.from(new Set(payload.shares.map((s) => s.uid)));
   const cleanTags = Array.from(
@@ -147,10 +155,13 @@ export async function addExpense(
     participantUids,
     payerUids,
     receiptImage: payload.receiptImage || '',
+    receiptMetadata: payload.receiptMetadata ?? null,
     isRecurring: payload.isRecurring,
     recurringFrequency: payload.recurringFrequency,
     recurringIntervalDays: payload.recurringIntervalDays ?? 0,
     nextOccurrenceDate: payload.nextOccurrenceDate || '',
+    ...(payload.recurringRuleId ? { recurringRuleId: payload.recurringRuleId } : {}),
+    ...(payload.occurrenceKey ? { occurrenceKey: payload.occurrenceKey } : {}),
     createdBy: me.uid,
     updatedBy: me.uid,
     createdAt: serverTimestamp(),
@@ -191,7 +202,8 @@ export async function updateExpense(
   me: UserPrivateProfile,
   group: Group,
   expenseId: string,
-  payload: ExpenseUpsertPayload
+  payload: ExpenseUpsertPayload,
+  previousReceiptStoragePath?: string
 ): Promise<{ queuedOffline: boolean }> {
   const expRef = doc(db, 'groups', group.id, 'expenses', expenseId);
   const payerUids = Array.from(new Set(payload.payers.map((p) => p.uid)));
@@ -222,6 +234,7 @@ export async function updateExpense(
     participantUids,
     payerUids,
     receiptImage: payload.receiptImage ?? '',
+    receiptMetadata: payload.receiptMetadata !== undefined ? payload.receiptMetadata : null,
     isRecurring: payload.isRecurring,
     recurringFrequency: payload.recurringFrequency,
     recurringIntervalDays: payload.recurringIntervalDays ?? 0,
@@ -245,8 +258,14 @@ export async function updateExpense(
     batch,
     OperationType.UPDATE,
     `groups/${group.id}/expenses/${expenseId}`,
-    () =>
-      notifyGroupMembers({
+    async () => {
+      if (
+        previousReceiptStoragePath &&
+        previousReceiptStoragePath !== payload.receiptMetadata?.storagePath
+      ) {
+        await deleteReceiptObject(previousReceiptStoragePath);
+      }
+      await notifyGroupMembers({
         memberUids: group.memberUids,
         senderUid: me.uid,
         senderName: me.fullName,
@@ -254,7 +273,8 @@ export async function updateExpense(
         title: `${group.name} · Expense updated`,
         body: `${me.fullName} updated "${payload.title.trim()}" (${displayOriginal}).`,
         groupId: group.id,
-      })
+      });
+    }
   );
 
   return { queuedOffline };
@@ -290,6 +310,10 @@ export async function deleteExpense(
     await batch.commit();
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, `groups/${group.id}/expenses/${expense.id}`);
+  }
+
+  if (expense.receiptMetadata?.storagePath) {
+    await deleteReceiptObject(expense.receiptMetadata.storagePath);
   }
 }
 

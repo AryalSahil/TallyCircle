@@ -179,15 +179,19 @@ export async function createGroup(
     handleFirestoreError(err, OperationType.CREATE, `groups/${groupRef.id}`);
   }
 
-  await notifyGroupMembers({
-    memberUids,
-    senderUid: me.uid,
-    senderName: me.fullName,
-    type: 'group_invite',
-    title: `Added to ${payload.name.trim()}`,
-    body: `${me.fullName} added you to the expense group "${payload.name.trim()}".`,
-    groupId: groupRef.id,
-  });
+  try {
+    await notifyGroupMembers({
+      memberUids,
+      senderUid: me.uid,
+      senderName: me.fullName,
+      type: 'group_invite',
+      title: `Added to ${payload.name.trim()}`,
+      body: `${me.fullName} added you to the expense group "${payload.name.trim()}".`,
+      groupId: groupRef.id,
+    });
+  } catch {
+    // Notification delivery failure must not fail an already-created group
+  }
 
   return groupRef.id;
 }
@@ -397,11 +401,30 @@ export async function deleteGroupWithData(
       getDocs(query(collection(db, 'groupInvites'), where('createdBy', '==', me.uid))),
     ]);
 
-  const noteSnaps = await Promise.all(
-    expensesSnap.docs.map((expDoc) =>
-      getDocs(collection(db, 'groups', group.id, 'expenses', expDoc.id, 'notes'))
-    )
-  );
+  const [noteSnaps, topInviteSnaps] = await Promise.all([
+    Promise.all(
+      expensesSnap.docs.map((expDoc) =>
+        getDocs(collection(db, 'groups', group.id, 'expenses', expDoc.id, 'notes'))
+      )
+    ),
+    Promise.all(
+      invitesSnap.docs.map((invDoc) =>
+        getDoc(doc(db, 'groupInvites', invDoc.id)).catch(() => null)
+      )
+    ),
+  ]);
+
+  const topInviteRefs = new Map<string, ReturnType<typeof doc>>();
+  for (const snap of topInviteSnaps) {
+    if (snap && snap.exists()) {
+      topInviteRefs.set(snap.id, snap.ref);
+    }
+  }
+  for (const d of myInvitesSnap.docs) {
+    if ((d.data() as GroupInvite).groupId === group.id) {
+      topInviteRefs.set(d.id, d.ref);
+    }
+  }
 
   const refsToDelete = [
     ...noteSnaps.flatMap((snap) => snap.docs.map((d) => d.ref)),
@@ -410,9 +433,7 @@ export async function deleteGroupWithData(
     ...activitiesSnap.docs.map((d) => d.ref),
     ...invitesSnap.docs.map((d) => d.ref),
     ...emailInvitesSnap.docs.map((d) => d.ref),
-    ...myInvitesSnap.docs
-      .filter((d) => (d.data() as GroupInvite).groupId === group.id)
-      .map((d) => d.ref),
+    ...Array.from(topInviteRefs.values()),
   ];
 
   if (refsToDelete.length <= 450) {

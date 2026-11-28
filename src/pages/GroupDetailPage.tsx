@@ -23,6 +23,7 @@ import {
   RefreshCw,
   Mail,
   MessageCircle,
+  Paperclip,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useAuth } from '../contexts/AuthContext';
@@ -142,13 +143,17 @@ export function GroupDetailPage() {
   const [regeneratingToken, setRegeneratingToken] = useState<string | null>(null);
   const [cancelEmailTarget, setCancelEmailTarget] = useState<GroupEmailInvite | null>(null);
   const [selectedFriendToAdd, setSelectedFriendToAdd] = useState('');
+  const [addingQuickFriend, setAddingQuickFriend] = useState(false);
 
-  // Settlement Pay / Dispute Dialog
+  // Settlement Pay / Dispute / Confirm Dialog
+  const [confirmingSettlementId, setConfirmingSettlementId] = useState<string | null>(null);
   const [payDialogSt, setPayDialogSt] = useState<Settlement | null>(null);
   const [payMethod, setPayMethod] = useState<'upi' | 'cash'>('upi');
   const [payRef, setPayRef] = useState('');
+  const [payingSettlement, setPayingSettlement] = useState(false);
   const [disputeDialogSt, setDisputeDialogSt] = useState<Settlement | null>(null);
   const [disputeReason, setDisputeReason] = useState('');
+  const [disputingSettlement, setDisputingSettlement] = useState(false);
 
   useEffect(() => {
     if (!profile?.uid || !group?.id) return;
@@ -184,6 +189,12 @@ export function GroupDetailPage() {
       (e.tags || []).forEach((t) => set.add(t));
     }
     return Array.from(set).sort();
+  }, [expenses]);
+
+  const categoryFilterOptions = useMemo(() => {
+    const set = new Set<string>(EXPENSE_CATEGORIES);
+    for (const e of expenses) set.add(e.category);
+    return Array.from(set);
   }, [expenses]);
 
   const filteredExpenses = useMemo(() => {
@@ -401,9 +412,10 @@ export function GroupDetailPage() {
   };
 
   const handleAddFriend = async () => {
-    if (!profile || !selectedFriendToAdd) return;
+    if (!profile || !selectedFriendToAdd || addingQuickFriend) return;
     const friend = profilesMap[selectedFriendToAdd];
     if (!friend) return;
+    setAddingQuickFriend(true);
     try {
       await addMemberToGroup(profile, group, friend);
       setSelectedFriendToAdd('');
@@ -413,6 +425,8 @@ export function GroupDetailPage() {
         description: err instanceof Error ? err.message : 'Try again.',
         variant: 'error',
       });
+    } finally {
+      setAddingQuickFriend(false);
     }
   };
 
@@ -437,8 +451,15 @@ export function GroupDetailPage() {
 
   const copyInviteUrl = async (token: string) => {
     const url = buildGroupInviteUrl(token);
-    await navigator.clipboard.writeText(url);
-    showToast('Invite link copied', { variant: 'success' });
+    try {
+      await navigator.clipboard.writeText(url);
+      showToast('Invite link copied', { variant: 'success' });
+    } catch {
+      showToast('Clipboard access failed', {
+        description: 'Copy the invitation link manually or use Share.',
+        variant: 'error',
+      });
+    }
   };
 
   const handleShareInvite = async (token: string) => {
@@ -649,7 +670,7 @@ export function GroupDetailPage() {
                 className="h-10 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 text-sm min-w-0"
               >
                 <option value="ALL">All categories</option>
-                {EXPENSE_CATEGORIES.map((c) => (
+                {categoryFilterOptions.map((c) => (
                   <option key={c} value={c}>
                     {c}
                   </option>
@@ -696,6 +717,32 @@ export function GroupDetailPage() {
                 />
               </div>
             </div>
+            {(searchQuery ||
+              filterCategory !== 'ALL' ||
+              filterTag !== 'ALL' ||
+              filterMember !== 'ALL' ||
+              filterDateFrom ||
+              filterDateTo) && (
+              <div className="mt-2.5 flex items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400">
+                <span>
+                  Showing {filteredExpenses.length} of {expenses.length} expense(s)
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setFilterCategory('ALL');
+                    setFilterTag('ALL');
+                    setFilterMember('ALL');
+                    setFilterDateFrom('');
+                    setFilterDateTo('');
+                  }}
+                  className="font-medium text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer"
+                >
+                  Clear filters
+                </button>
+              </div>
+            )}
           </Card>
 
           {filteredExpenses.length === 0 ? (
@@ -736,6 +783,12 @@ export function GroupDetailPage() {
                         <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">
                           {exp.title}
                         </p>
+                        {(exp.receiptMetadata?.storagePath || exp.receiptImage) && (
+                          <Paperclip
+                            className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0"
+                            aria-label="Receipt attached"
+                          />
+                        )}
                         {exp.tags && exp.tags.length > 0 && (
                           <span className="text-xs text-emerald-600 dark:text-emerald-400 truncate shrink-0">
                             {exp.tags.map((t) => `#${t}`).join(' · ')}
@@ -745,7 +798,6 @@ export function GroupDetailPage() {
                       <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                         {exp.category} · {formatShortDate(exp.expenseDate)} · Paid by{' '}
                         {exp.payers.map((p) => `${p.name} (${formatAmount(p.amountPaise)})`).join(', ')}
-                        {exp.receiptImage ? ' · Receipt attached' : ''}
                       </p>
                     </div>
                     <div className="flex sm:flex-col items-center sm:items-end justify-between gap-1 shrink-0">
@@ -1027,10 +1079,22 @@ export function GroupDetailPage() {
                         <>
                           <Button
                             size="sm"
+                            loading={confirmingSettlementId === st.id}
+                            disabled={Boolean(confirmingSettlementId && confirmingSettlementId !== st.id)}
                             onClick={async () => {
-                              if (!profile) return;
-                              await confirmSettlement(profile, group, st);
-                              showToast('Settlement confirmed', { variant: 'success' });
+                              if (!profile || confirmingSettlementId) return;
+                              setConfirmingSettlementId(st.id);
+                              try {
+                                await confirmSettlement(profile, group, st);
+                                showToast('Settlement confirmed', { variant: 'success' });
+                              } catch (err: unknown) {
+                                showToast('Could not confirm settlement', {
+                                  description: err instanceof Error ? err.message : 'Try again.',
+                                  variant: 'error',
+                                });
+                              } finally {
+                                setConfirmingSettlementId(null);
+                              }
                             }}
                           >
                             <CheckCircle2 className="w-3.5 h-3.5" />
@@ -1210,7 +1274,13 @@ export function GroupDetailPage() {
                   ))}
                 </select>
                 <div className="flex items-center gap-2">
-                  <Button size="sm" onClick={handleAddFriend} disabled={!selectedFriendToAdd} className="flex-1 sm:flex-initial">
+                  <Button
+                    size="sm"
+                    onClick={handleAddFriend}
+                    loading={addingQuickFriend}
+                    disabled={!selectedFriendToAdd}
+                    className="flex-1 sm:flex-initial"
+                  >
                     <UserPlus className="w-3.5 h-3.5" />
                     Add
                   </Button>
@@ -1476,8 +1546,15 @@ export function GroupDetailPage() {
                             size="sm"
                             variant="outline"
                             onClick={async () => {
-                              await navigator.clipboard.writeText(ei.inviteUrl);
-                              showToast('Invitation link copied', { variant: 'success' });
+                              try {
+                                await navigator.clipboard.writeText(ei.inviteUrl);
+                                showToast('Invitation link copied', { variant: 'success' });
+                              } catch {
+                                showToast('Clipboard access failed', {
+                                  description: 'Unable to copy invitation link automatically.',
+                                  variant: 'error',
+                                });
+                              }
                             }}
                           >
                             <Copy className="w-3.5 h-3.5" />
@@ -1580,13 +1657,23 @@ export function GroupDetailPage() {
           <form
             onSubmit={async (e) => {
               e.preventDefault();
-              if (!profile) return;
-              await markSettlementPaid(profile, group, payDialogSt, {
-                method: payMethod,
-                upiTransactionRef: payRef,
-              });
-              showToast('Marked as paid — awaiting confirmation', { variant: 'success' });
-              setPayDialogSt(null);
+              if (!profile || payingSettlement) return;
+              setPayingSettlement(true);
+              try {
+                await markSettlementPaid(profile, group, payDialogSt, {
+                  method: payMethod,
+                  upiTransactionRef: payRef,
+                });
+                showToast('Marked as paid — awaiting confirmation', { variant: 'success' });
+                setPayDialogSt(null);
+              } catch (err: unknown) {
+                showToast('Could not submit payment', {
+                  description: err instanceof Error ? err.message : 'Try again.',
+                  variant: 'error',
+                });
+              } finally {
+                setPayingSettlement(false);
+              }
             }}
             className="space-y-4"
           >
@@ -1618,7 +1705,7 @@ export function GroupDetailPage() {
               <Button type="button" variant="outline" onClick={() => setPayDialogSt(null)} className="w-full sm:w-auto">
                 Cancel
               </Button>
-              <Button type="submit" className="w-full sm:w-auto">Submit Payment</Button>
+              <Button type="submit" loading={payingSettlement} className="w-full sm:w-auto">Submit Payment</Button>
             </div>
           </form>
         )}
@@ -1635,10 +1722,20 @@ export function GroupDetailPage() {
           <form
             onSubmit={async (e) => {
               e.preventDefault();
-              if (!profile) return;
-              await disputeSettlement(profile, group, disputeDialogSt, disputeReason);
-              showToast('Settlement flagged as disputed', { variant: 'info' });
-              setDisputeDialogSt(null);
+              if (!profile || disputingSettlement) return;
+              setDisputingSettlement(true);
+              try {
+                await disputeSettlement(profile, group, disputeDialogSt, disputeReason);
+                showToast('Settlement flagged as disputed', { variant: 'info' });
+                setDisputeDialogSt(null);
+              } catch (err: unknown) {
+                showToast('Could not dispute settlement', {
+                  description: err instanceof Error ? err.message : 'Try again.',
+                  variant: 'error',
+                });
+              } finally {
+                setDisputingSettlement(false);
+              }
             }}
             className="space-y-4"
           >
@@ -1653,7 +1750,7 @@ export function GroupDetailPage() {
               <Button type="button" variant="outline" onClick={() => setDisputeDialogSt(null)} className="w-full sm:w-auto">
                 Cancel
               </Button>
-              <Button type="submit" variant="danger" className="w-full sm:w-auto">
+              <Button type="submit" variant="danger" loading={disputingSettlement} className="w-full sm:w-auto">
                 Confirm Dispute
               </Button>
             </div>

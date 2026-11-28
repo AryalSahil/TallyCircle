@@ -39,6 +39,12 @@ service cloud.firestore {
         && request.auth.uid in get(/databases/$(database)/documents/groups/$(groupId)).data.memberUids;
     }
 
+    function isTripParticipant(tripId) {
+      return isVerifiedUser()
+        && exists(/databases/$(database)/documents/trips/$(tripId))
+        && request.auth.uid in get(/databases/$(database)/documents/trips/$(tripId)).data.participantUids;
+    }
+
     // --- Validation Blueprints ---
     function isValidUserPrivate(data, uid) {
       return data.keys().hasAll(['uid', 'fullName', 'email', 'handle', 'createdAt', 'updatedAt'])
@@ -194,9 +200,63 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidReceiptMetadata(meta) {
+      return meta is map
+        && meta.keys().hasAll(['storagePath', 'fileName', 'contentType', 'sizeBytes', 'uploadedByUid', 'uploadedAt'])
+        && meta.keys().hasOnly(['storagePath', 'fileName', 'contentType', 'sizeBytes', 'uploadedByUid', 'uploadedAt'])
+        && meta.storagePath is string && meta.storagePath.size() >= 10 && meta.storagePath.size() <= 300
+        && meta.storagePath.matches('^receipts/(groups|trips)/[a-zA-Z0-9_\\-]+/[a-zA-Z0-9_\\-]+/.+$')
+        && meta.fileName is string && meta.fileName.size() >= 1 && meta.fileName.size() <= 140
+        && meta.contentType in ['image/jpeg', 'image/jpg', 'image/png', 'image/webp']
+        && meta.sizeBytes is int && meta.sizeBytes > 0 && meta.sizeBytes <= 5242880
+        && meta.uploadedByUid is string && meta.uploadedByUid.size() >= 1 && meta.uploadedByUid.size() <= 128
+        && meta.uploadedAt is string && meta.uploadedAt.size() >= 10 && meta.uploadedAt.size() <= 40;
+    }
+
+    function isValidExpenseCategory(cat) {
+      return cat in [
+        'Food & Drinks', 'Transport', 'Accommodation', 'Shopping',
+        'Entertainment', 'Groceries', 'Bills', 'Travel', 'Other',
+        'Food', 'Restaurant', 'Hotel', 'Clubbing', 'Fuel', 'Tickets'
+      ];
+    }
+
     function isValidExpense(data, groupId) {
       return data.keys().hasAll(['groupId', 'title', 'description', 'amountPaise', 'category', 'expenseDate', 'splitMethod', 'payers', 'shares', 'participantUids', 'payerUids', 'isRecurring', 'recurringFrequency', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['groupId', 'title', 'description', 'amountPaise', 'currency', 'originalAmountMinor', 'exchangeRateToInr', 'tags', 'category', 'expenseDate', 'splitMethod', 'payers', 'shares', 'participantUids', 'payerUids', 'receiptImage', 'isRecurring', 'recurringFrequency', 'recurringIntervalDays', 'nextOccurrenceDate', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['groupId', 'tripId', 'title', 'description', 'amountPaise', 'currency', 'originalAmountMinor', 'exchangeRateToInr', 'tags', 'category', 'expenseDate', 'splitMethod', 'payers', 'shares', 'participantUids', 'payerUids', 'receiptImage', 'receiptMetadata', 'isRecurring', 'recurringFrequency', 'recurringIntervalDays', 'nextOccurrenceDate', 'recurringRuleId', 'occurrenceKey', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt'])
+        && data.groupId == groupId
+        && (!('tripId' in data) || (data.tripId is string && data.tripId.size() <= 128))
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 120
+        && data.description is string && data.description.size() <= 500
+        && data.amountPaise is int && data.amountPaise > 0 && data.amountPaise <= 1000000000
+        && (!('currency' in data) || data.currency in ['INR', 'USD', 'EUR', 'GBP', 'AED', 'SGD', 'THB'])
+        && (!('originalAmountMinor' in data) || (data.originalAmountMinor is int && data.originalAmountMinor > 0 && data.originalAmountMinor <= 1000000000))
+        && (!('exchangeRateToInr' in data) || (data.exchangeRateToInr is number && data.exchangeRateToInr > 0 && data.exchangeRateToInr <= 100000))
+        && (!('tags' in data) || (data.tags is list && data.tags.size() <= 10 && (data.tags.size() == 0 || (data.tags[0] is string && data.tags[0].size() >= 1 && data.tags[0].size() <= 30))))
+        && isValidExpenseCategory(data.category)
+        && data.expenseDate is string && data.expenseDate.size() >= 4 && data.expenseDate.size() <= 40
+        && data.splitMethod in ['equal', 'unequal', 'percentage', 'shares']
+        && data.payers is list && data.payers.size() >= 1 && data.payers.size() <= 50 && data.payers[0] is map
+        && data.shares is list && data.shares.size() >= 1 && data.shares.size() <= 50 && data.shares[0] is map
+        && data.participantUids is list && data.participantUids.size() >= 1 && data.participantUids.size() <= 50 && data.participantUids[0] is string
+        && data.payerUids is list && data.payerUids.size() >= 1 && data.payerUids.size() <= 50 && data.payerUids[0] is string
+        && (!('receiptImage' in data) || (data.receiptImage is string && data.receiptImage.size() <= 450000))
+        && (!('receiptMetadata' in data) || data.receiptMetadata == null || isValidReceiptMetadata(data.receiptMetadata))
+        && data.isRecurring is bool
+        && data.recurringFrequency in ['none', 'daily', 'weekly', 'monthly', 'yearly', 'custom']
+        && (!('recurringIntervalDays' in data) || (data.recurringIntervalDays is int && data.recurringIntervalDays >= 0 && data.recurringIntervalDays <= 365))
+        && (!('nextOccurrenceDate' in data) || (data.nextOccurrenceDate is string && data.nextOccurrenceDate.size() <= 40))
+        && (!('recurringRuleId' in data) || (data.recurringRuleId is string && data.recurringRuleId.size() <= 128))
+        && (!('occurrenceKey' in data) || (data.occurrenceKey is string && data.occurrenceKey.size() <= 160))
+        && data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128
+        && data.updatedBy is string && data.updatedBy.size() >= 1 && data.updatedBy.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidRecurringRule(data, groupId) {
+      return data.keys().hasAll(['groupId', 'title', 'description', 'amountPaise', 'category', 'splitMethod', 'payers', 'shares', 'participantUids', 'payerUids', 'frequency', 'intervalDays', 'anchorDayOfMonth', 'monthEndPolicy', 'startDate', 'nextOccurrenceDate', 'status', 'generatedCount', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['groupId', 'title', 'description', 'amountPaise', 'currency', 'originalAmountMinor', 'exchangeRateToInr', 'tags', 'category', 'splitMethod', 'payers', 'shares', 'participantUids', 'payerUids', 'frequency', 'intervalDays', 'anchorDayOfMonth', 'monthEndPolicy', 'startDate', 'endDate', 'nextOccurrenceDate', 'status', 'generatedCount', 'lastGeneratedDate', 'lastGeneratedAt', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt'])
         && data.groupId == groupId
         && data.title is string && data.title.size() >= 1 && data.title.size() <= 120
         && data.description is string && data.description.size() <= 500
@@ -205,20 +265,72 @@ service cloud.firestore {
         && (!('originalAmountMinor' in data) || (data.originalAmountMinor is int && data.originalAmountMinor > 0 && data.originalAmountMinor <= 1000000000))
         && (!('exchangeRateToInr' in data) || (data.exchangeRateToInr is number && data.exchangeRateToInr > 0 && data.exchangeRateToInr <= 100000))
         && (!('tags' in data) || (data.tags is list && data.tags.size() <= 10 && (data.tags.size() == 0 || (data.tags[0] is string && data.tags[0].size() >= 1 && data.tags[0].size() <= 30))))
-        && data.category in ['Food', 'Restaurant', 'Travel', 'Hotel', 'Clubbing', 'Shopping', 'Entertainment', 'Transport', 'Fuel', 'Tickets', 'Other']
-        && data.expenseDate is string && data.expenseDate.size() >= 4 && data.expenseDate.size() <= 40
+        && isValidExpenseCategory(data.category)
         && data.splitMethod in ['equal', 'unequal', 'percentage', 'shares']
         && data.payers is list && data.payers.size() >= 1 && data.payers.size() <= 50 && data.payers[0] is map
         && data.shares is list && data.shares.size() >= 1 && data.shares.size() <= 50 && data.shares[0] is map
         && data.participantUids is list && data.participantUids.size() >= 1 && data.participantUids.size() <= 50 && data.participantUids[0] is string
         && data.payerUids is list && data.payerUids.size() >= 1 && data.payerUids.size() <= 50 && data.payerUids[0] is string
-        && (!('receiptImage' in data) || (data.receiptImage is string && data.receiptImage.size() <= 450000))
-        && data.isRecurring is bool
-        && data.recurringFrequency in ['none', 'weekly', 'monthly', 'custom']
-        && (!('recurringIntervalDays' in data) || (data.recurringIntervalDays is int && data.recurringIntervalDays >= 0 && data.recurringIntervalDays <= 365))
-        && (!('nextOccurrenceDate' in data) || (data.nextOccurrenceDate is string && data.nextOccurrenceDate.size() <= 40))
+        && data.frequency in ['daily', 'weekly', 'monthly', 'yearly', 'custom']
+        && data.intervalDays is int && data.intervalDays >= 0 && data.intervalDays <= 365
+        && data.anchorDayOfMonth is int && data.anchorDayOfMonth >= 1 && data.anchorDayOfMonth <= 31
+        && data.monthEndPolicy == 'clamp_last_day'
+        && data.startDate is string && data.startDate.size() >= 10 && data.startDate.size() <= 20
+        && (!('endDate' in data) || (data.endDate is string && data.endDate.size() <= 20))
+        && data.nextOccurrenceDate is string && data.nextOccurrenceDate.size() >= 10 && data.nextOccurrenceDate.size() <= 20
+        && data.status in ['active', 'paused', 'cancelled', 'completed']
+        && data.generatedCount is int && data.generatedCount >= 0 && data.generatedCount <= 10000
+        && (!('lastGeneratedDate' in data) || (data.lastGeneratedDate is string && data.lastGeneratedDate.size() <= 20))
+        && (!('lastGeneratedAt' in data) || data.lastGeneratedAt is timestamp)
         && data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128
         && data.updatedBy is string && data.updatedBy.size() >= 1 && data.updatedBy.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidTrip(data) {
+      return data.keys().hasAll(['name', 'destination', 'description', 'currency', 'exchangeRateToInr', 'budgetPaise', 'isArchived', 'participantUids', 'participantNames', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['name', 'destination', 'description', 'coverImage', 'startDate', 'endDate', 'currency', 'exchangeRateToInr', 'exchangeRateUpdatedAt', 'budgetPaise', 'memberBudgetsPaise', 'isArchived', 'participantUids', 'participantNames', 'participantEmails', 'participantJoinedAt', 'lastJoinToken', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
+        && data.destination is string && data.destination.size() >= 1 && data.destination.size() <= 100
+        && data.description is string && data.description.size() <= 500
+        && (!('coverImage' in data) || (data.coverImage is string && data.coverImage.size() <= 350000))
+        && (!('startDate' in data) || (data.startDate is string && data.startDate.size() <= 20))
+        && (!('endDate' in data) || (data.endDate is string && data.endDate.size() <= 20))
+        && data.currency in ['INR', 'USD', 'EUR', 'GBP', 'AED', 'SGD', 'THB']
+        && data.exchangeRateToInr is number && data.exchangeRateToInr > 0 && data.exchangeRateToInr <= 100000
+        && (!('exchangeRateUpdatedAt' in data) || (data.exchangeRateUpdatedAt is string && data.exchangeRateUpdatedAt.size() <= 40))
+        && data.budgetPaise is int && data.budgetPaise >= 0 && data.budgetPaise <= 1000000000
+        && (!('memberBudgetsPaise' in data) || (data.memberBudgetsPaise is map && data.memberBudgetsPaise.size() <= 50))
+        && data.isArchived is bool
+        && data.participantUids is list && data.participantUids.size() >= 1 && data.participantUids.size() <= 50
+        && data.participantUids[0] is string
+        && data.participantNames is map && data.participantNames.size() <= 100
+        && (!('participantEmails' in data) || (data.participantEmails is map && data.participantEmails.size() <= 100))
+        && (!('participantJoinedAt' in data) || (data.participantJoinedAt is map && data.participantJoinedAt.size() <= 100))
+        && (!('lastJoinToken' in data) || (data.lastJoinToken is string && data.lastJoinToken.size() <= 128))
+        && data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidTripInvite(data) {
+      return data.keys().hasAll(['token', 'tripId', 'tripName', 'createdBy', 'expiresAt', 'maxUses', 'usesCount', 'usedBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['token', 'tripId', 'tripName', 'destination', 'createdBy', 'createdByName', 'status', 'revokedBy', 'revokedAt', 'expiresAt', 'maxUses', 'usesCount', 'usedBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.token)
+        && isValidId(data.tripId)
+        && data.tripName is string && data.tripName.size() >= 1 && data.tripName.size() <= 80
+        && (!('destination' in data) || (data.destination is string && data.destination.size() <= 100))
+        && data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128
+        && (!('createdByName' in data) || (data.createdByName is string && data.createdByName.size() <= 80))
+        && (!('status' in data) || data.status in ['active', 'revoked'])
+        && (!('revokedBy' in data) || (data.revokedBy is string && data.revokedBy.size() <= 128))
+        && (!('revokedAt' in data) || data.revokedAt is timestamp)
+        && data.expiresAt is timestamp
+        && data.maxUses is int && data.maxUses >= 1 && data.maxUses <= 100
+        && data.usesCount is int && data.usesCount >= 0 && data.usesCount <= data.maxUses
+        && data.usedBy is list && data.usedBy.size() <= 100
+        && (data.usedBy.size() == 0 || data.usedBy[0] is string)
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -321,13 +433,22 @@ service cloud.firestore {
         && isValidUserLookup(incoming())
         && incoming().uid == request.auth.uid
         && incoming().createdAt == request.time
-        && incoming().updatedAt == request.time;
+        && incoming().updatedAt == request.time
+        && (
+          (lookupKey == 'handle_' + incoming().handle
+            && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.handle == incoming().handle)
+          || lookupKey.matches('^email_[0-9a-f]{64}$')
+        );
       allow update: if isValidId(lookupKey) && isVerifiedUser()
         && isValidUserLookup(incoming())
         && existing().uid == request.auth.uid
         && incoming().uid == existing().uid
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
+        && (
+          (lookupKey == 'handle_' + incoming().handle && incoming().handle == existing().handle)
+          || lookupKey.matches('^email_[0-9a-f]{64}$')
+        )
         && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'handle', 'photoUrl', 'updatedAt']);
       allow delete: if isValidId(lookupKey) && isVerifiedUser() && existing().uid == request.auth.uid;
     }
@@ -522,8 +643,8 @@ service cloud.firestore {
           && incoming().diff(existing()).affectedKeys().hasOnly([
             'title', 'description', 'amountPaise', 'currency', 'originalAmountMinor', 'exchangeRateToInr', 'tags',
             'category', 'expenseDate', 'splitMethod', 'payers', 'shares', 'participantUids', 'payerUids',
-            'receiptImage', 'isRecurring', 'recurringFrequency', 'recurringIntervalDays',
-            'nextOccurrenceDate', 'updatedBy', 'updatedAt'
+            'receiptImage', 'receiptMetadata', 'isRecurring', 'recurringFrequency', 'recurringIntervalDays',
+            'nextOccurrenceDate', 'recurringRuleId', 'occurrenceKey', 'updatedBy', 'updatedAt'
           ]);
         allow delete: if isValidId(groupId) && isValidId(expenseId) && isGroupMember(groupId);
 
@@ -679,6 +800,268 @@ service cloud.firestore {
         allow delete: if isValidId(groupId) && isValidId(inviteId) && isGroupMember(groupId)
           && !existsAfter(/databases/$(database)/documents/groups/$(groupId));
       }
+
+      match /recurringExpenses/{ruleId} {
+        allow get: if isValidId(groupId) && isValidId(ruleId) && isGroupMember(groupId);
+        allow list: if isValidId(groupId) && isGroupMember(groupId);
+        allow create: if isValidId(groupId) && isValidId(ruleId) && isVerifiedUser()
+          && isValidRecurringRule(incoming(), groupId)
+          && incoming().createdBy == request.auth.uid
+          && incoming().updatedBy == request.auth.uid
+          && incoming().generatedCount == 0
+          && incoming().status == 'active'
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isGroupMember(groupId);
+        allow update: if isValidId(groupId) && isValidId(ruleId) && isVerifiedUser()
+          && isValidRecurringRule(incoming(), groupId)
+          && isGroupMember(groupId)
+          && incoming().groupId == existing().groupId
+          && incoming().createdBy == existing().createdBy
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedBy == request.auth.uid
+          && incoming().updatedAt == request.time
+          && incoming().generatedCount == existing().generatedCount
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'description', 'amountPaise', 'currency', 'originalAmountMinor', 'exchangeRateToInr', 'tags',
+            'category', 'splitMethod', 'payers', 'shares', 'participantUids', 'payerUids',
+            'frequency', 'intervalDays', 'anchorDayOfMonth', 'monthEndPolicy',
+            'startDate', 'endDate', 'nextOccurrenceDate', 'status', 'updatedBy', 'updatedAt'
+          ]);
+        allow delete: if isValidId(groupId) && isValidId(ruleId) && isGroupMember(groupId);
+      }
+    }
+
+    match /trips/{tripId} {
+      allow get: if isValidId(tripId) && isVerifiedUser() && (resource == null || request.auth.uid in resource.data.participantUids);
+      allow list: if isVerifiedUser() && request.auth.uid in resource.data.participantUids;
+      allow create: if isValidId(tripId) && isVerifiedUser()
+        && isValidTrip(incoming())
+        && incoming().createdBy == request.auth.uid
+        && request.auth.uid in incoming().participantUids
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(tripId) && isVerifiedUser()
+        && isValidTrip(incoming())
+        && incoming().createdBy == existing().createdBy
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (request.auth.uid in existing().participantUids
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'name', 'destination', 'description', 'coverImage', 'startDate', 'endDate',
+              'currency', 'exchangeRateToInr', 'exchangeRateUpdatedAt', 'budgetPaise', 'memberBudgetsPaise',
+              'isArchived', 'participantUids', 'participantNames', 'participantEmails', 'participantJoinedAt', 'updatedAt'
+            ]))
+          ||
+          (!(request.auth.uid in existing().participantUids)
+            && request.auth.uid in incoming().participantUids
+            && incoming().participantUids.hasAll(existing().participantUids)
+            && incoming().participantUids.size() == existing().participantUids.size() + 1
+            && 'lastJoinToken' in incoming()
+            && isValidId(incoming().lastJoinToken)
+            && exists(/databases/$(database)/documents/tripInvites/$(incoming().lastJoinToken))
+            && get(/databases/$(database)/documents/tripInvites/$(incoming().lastJoinToken)).data.tripId == tripId
+            && (!('status' in get(/databases/$(database)/documents/tripInvites/$(incoming().lastJoinToken)).data) || get(/databases/$(database)/documents/tripInvites/$(incoming().lastJoinToken)).data.status == 'active')
+            && getAfter(/databases/$(database)/documents/tripInvites/$(incoming().lastJoinToken)).data.usesCount == get(/databases/$(database)/documents/tripInvites/$(incoming().lastJoinToken)).data.usesCount + 1
+            && incoming().diff(existing()).affectedKeys().hasOnly(['participantUids', 'participantNames', 'participantEmails', 'participantJoinedAt', 'lastJoinToken', 'updatedAt']))
+        );
+      allow delete: if isValidId(tripId) && isVerifiedUser() && request.auth.uid in existing().participantUids;
+
+      match /expenses/{expenseId} {
+        allow get: if isValidId(tripId) && isValidId(expenseId) && isTripParticipant(tripId);
+        allow list: if isValidId(tripId) && isTripParticipant(tripId);
+        allow create: if isValidId(tripId) && isValidId(expenseId) && isVerifiedUser()
+          && isValidExpense(incoming(), tripId)
+          && incoming().createdBy == request.auth.uid
+          && incoming().updatedBy == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isTripParticipant(tripId);
+        allow update: if isValidId(tripId) && isValidId(expenseId) && isVerifiedUser()
+          && isValidExpense(incoming(), tripId)
+          && incoming().groupId == existing().groupId
+          && incoming().createdBy == existing().createdBy
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedBy == request.auth.uid
+          && incoming().updatedAt == request.time
+          && isTripParticipant(tripId)
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'description', 'amountPaise', 'currency', 'originalAmountMinor', 'exchangeRateToInr', 'tags',
+            'category', 'expenseDate', 'splitMethod', 'payers', 'shares', 'participantUids', 'payerUids',
+            'receiptImage', 'receiptMetadata', 'isRecurring', 'recurringFrequency', 'recurringIntervalDays',
+            'nextOccurrenceDate', 'updatedBy', 'updatedAt'
+          ]);
+        allow delete: if isValidId(tripId) && isValidId(expenseId) && isTripParticipant(tripId);
+
+        match /notes/{noteId} {
+          allow get: if isValidId(tripId) && isValidId(expenseId) && isValidId(noteId) && isTripParticipant(tripId);
+          allow list: if isValidId(tripId) && isValidId(expenseId) && isTripParticipant(tripId);
+          allow create: if isValidId(tripId) && isValidId(expenseId) && isValidId(noteId) && isVerifiedUser()
+            && isValidExpenseNote(incoming())
+            && incoming().authorUid == request.auth.uid
+            && incoming().createdAt == request.time
+            && isTripParticipant(tripId);
+          allow update: if false;
+          allow delete: if isValidId(tripId) && isValidId(expenseId) && isValidId(noteId)
+            && isTripParticipant(tripId)
+            && (existing().authorUid == request.auth.uid
+              || !existsAfter(/databases/$(database)/documents/trips/$(tripId)/expenses/$(expenseId))
+              || !existsAfter(/databases/$(database)/documents/trips/$(tripId)));
+        }
+      }
+
+      match /settlements/{settlementId} {
+        allow get: if isValidId(tripId) && isValidId(settlementId) && isTripParticipant(tripId);
+        allow list: if isValidId(tripId) && isTripParticipant(tripId);
+        allow create: if isValidId(tripId) && isValidId(settlementId) && isVerifiedUser()
+          && isValidSettlement(incoming(), tripId)
+          && incoming().createdBy == request.auth.uid
+          && incoming().status in ['pending', 'awaiting_confirmation']
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isTripParticipant(tripId);
+        allow update: if isValidId(tripId) && isValidId(settlementId) && isVerifiedUser()
+          && isValidSettlement(incoming(), tripId)
+          && existing().status != 'confirmed'
+          && incoming().groupId == existing().groupId
+          && incoming().fromUid == existing().fromUid
+          && incoming().fromName == existing().fromName
+          && incoming().toUid == existing().toUid
+          && incoming().toName == existing().toName
+          && incoming().createdBy == existing().createdBy
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && isTripParticipant(tripId)
+          && (
+            (request.auth.uid == existing().fromUid
+              && existing().status in ['pending', 'disputed']
+              && incoming().status == 'awaiting_confirmation'
+              && incoming().amountPaise == existing().amountPaise
+              && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'method', 'upiTransactionRef', 'note', 'updatedAt']))
+            ||
+            (request.auth.uid == existing().toUid
+              && existing().status in ['pending', 'awaiting_confirmation', 'disputed']
+              && incoming().status == 'confirmed'
+              && incoming().amountPaise == existing().amountPaise
+              && incoming().confirmedBy == request.auth.uid
+              && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'confirmedBy', 'updatedAt']))
+            ||
+            (request.auth.uid == existing().toUid
+              && existing().status in ['pending', 'awaiting_confirmation']
+              && incoming().status == 'disputed'
+              && incoming().amountPaise == existing().amountPaise
+              && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'disputeReason', 'updatedAt']))
+            ||
+            ((request.auth.uid == existing().createdBy || request.auth.uid == existing().fromUid || request.auth.uid == existing().toUid)
+              && existing().status in ['pending', 'awaiting_confirmation', 'disputed']
+              && incoming().status == existing().status
+              && incoming().diff(existing()).affectedKeys().hasOnly(['amountPaise', 'method', 'upiTransactionRef', 'note', 'updatedAt']))
+          );
+        allow delete: if isValidId(tripId) && isValidId(settlementId)
+          && isTripParticipant(tripId)
+          && (
+            (existing().status != 'confirmed'
+              && (request.auth.uid == existing().createdBy || request.auth.uid == existing().fromUid || request.auth.uid == existing().toUid))
+            || !existsAfter(/databases/$(database)/documents/trips/$(tripId))
+          );
+      }
+
+      match /activities/{activityId} {
+        allow get: if isValidId(tripId) && isValidId(activityId) && isTripParticipant(tripId);
+        allow list: if isValidId(tripId) && isTripParticipant(tripId);
+        allow create: if isValidId(tripId) && isValidId(activityId) && isVerifiedUser()
+          && isValidActivity(incoming(), tripId)
+          && incoming().actorUid == request.auth.uid
+          && incoming().createdAt == request.time
+          && (
+            isTripParticipant(tripId)
+            || request.auth.uid in getAfter(/databases/$(database)/documents/trips/$(tripId)).data.participantUids
+          );
+        allow update: if false;
+        allow delete: if isValidId(tripId) && isValidId(activityId) && isTripParticipant(tripId)
+          && !existsAfter(/databases/$(database)/documents/trips/$(tripId));
+      }
+
+      match /invites/{token} {
+        allow get: if isValidId(tripId) && isValidId(token) && isTripParticipant(tripId);
+        allow list: if isValidId(tripId) && isTripParticipant(tripId);
+        allow create: if isValidId(tripId) && isValidId(token) && isVerifiedUser()
+          && isValidTripInvite(incoming())
+          && incoming().token == token
+          && incoming().tripId == tripId
+          && incoming().createdBy == request.auth.uid
+          && (!('status' in incoming()) || incoming().status == 'active')
+          && incoming().usesCount == 0
+          && incoming().usedBy.size() == 0
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isTripParticipant(tripId);
+        allow update: if isValidId(tripId) && isValidId(token) && isVerifiedUser()
+          && isValidTripInvite(incoming())
+          && isTripParticipant(tripId)
+          && incoming().token == existing().token
+          && incoming().tripId == existing().tripId
+          && incoming().createdBy == existing().createdBy
+          && incoming().expiresAt == existing().expiresAt
+          && incoming().maxUses == existing().maxUses
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (!('status' in existing()) || existing().status == 'active')
+          && incoming().status == 'revoked'
+          && incoming().revokedBy == request.auth.uid
+          && incoming().revokedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'revokedBy', 'revokedAt', 'updatedAt']);
+        allow delete: if isValidId(tripId) && isValidId(token) && isTripParticipant(tripId)
+          && !existsAfter(/databases/$(database)/documents/trips/$(tripId));
+      }
+    }
+
+    match /tripInvites/{token} {
+      allow get: if isValidId(token) && isVerifiedUser();
+      allow list: if isVerifiedUser() && resource.data.createdBy == request.auth.uid;
+      allow create: if isValidId(token) && isVerifiedUser()
+        && isValidTripInvite(incoming())
+        && incoming().token == token
+        && incoming().createdBy == request.auth.uid
+        && (!('status' in incoming()) || incoming().status == 'active')
+        && incoming().usesCount == 0
+        && incoming().usedBy.size() == 0
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isTripParticipant(incoming().tripId);
+      allow update: if isValidId(token) && isVerifiedUser()
+        && isValidTripInvite(incoming())
+        && incoming().token == existing().token
+        && incoming().tripId == existing().tripId
+        && incoming().tripName == existing().tripName
+        && incoming().createdBy == existing().createdBy
+        && incoming().expiresAt == existing().expiresAt
+        && incoming().maxUses == existing().maxUses
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          ((!('status' in existing()) || existing().status == 'active')
+            && (!('status' in incoming()) || incoming().status == 'active')
+            && existing().usesCount < existing().maxUses
+            && request.time < existing().expiresAt
+            && incoming().usesCount == existing().usesCount + 1
+            && !(request.auth.uid in existing().usedBy)
+            && request.auth.uid in incoming().usedBy
+            && incoming().usedBy.size() == existing().usedBy.size() + 1
+            && incoming().diff(existing()).affectedKeys().hasOnly(['usesCount', 'usedBy', 'updatedAt']))
+          ||
+          ((isTripParticipant(existing().tripId) || existing().createdBy == request.auth.uid)
+            && (!('status' in existing()) || existing().status == 'active')
+            && incoming().status == 'revoked'
+            && incoming().revokedBy == request.auth.uid
+            && incoming().revokedAt == request.time
+            && incoming().usesCount == existing().usesCount
+            && incoming().usedBy == existing().usedBy
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'revokedBy', 'revokedAt', 'updatedAt']))
+        );
+      allow delete: if isValidId(token) && isVerifiedUser()
+        && (isTripParticipant(existing().tripId) || existing().createdBy == request.auth.uid);
     }
 
     match /groupInvites/{token} {

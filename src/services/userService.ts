@@ -12,8 +12,24 @@ import { normalizeHandle, sanitizeHandleInput, sha256Hex } from '../utils/helper
 import { isSupportedCurrency, normalizeExpenseTag } from '../utils/finance';
 
 const publicProfileCache = new Map<string, PublicProfile>();
+const inFlightEnsureProfile = new Map<string, Promise<UserPrivateProfile>>();
+
+export function clearPublicProfileCache(): void {
+  publicProfileCache.clear();
+}
 
 export async function ensureUserProfile(firebaseUser: User): Promise<UserPrivateProfile> {
+  const existingTask = inFlightEnsureProfile.get(firebaseUser.uid);
+  if (existingTask) return existingTask;
+
+  const task = ensureUserProfileImpl(firebaseUser).finally(() => {
+    inFlightEnsureProfile.delete(firebaseUser.uid);
+  });
+  inFlightEnsureProfile.set(firebaseUser.uid, task);
+  return task;
+}
+
+async function ensureUserProfileImpl(firebaseUser: User): Promise<UserPrivateProfile> {
   const userRef = doc(db, 'users', firebaseUser.uid);
   const publicRef = doc(db, 'publicProfiles', firebaseUser.uid);
 
@@ -203,16 +219,22 @@ export async function updateUserProfile(
   });
 
   const emailKey = `email_${await sha256Hex(current.email)}`;
-  batch.update(doc(db, 'userLookup', emailKey), {
-    displayName: fullName,
-    handle: newHandle,
-    photoUrl,
-    updatedAt: serverTimestamp(),
-  });
+  const emailLookupRef = doc(db, 'userLookup', emailKey);
+  const handleLookupRef = doc(db, 'userLookup', `handle_${newHandle}`);
+  const [emailLookupSnap, handleLookupSnap] = await Promise.all([
+    getDoc(emailLookupRef),
+    getDoc(handleLookupRef),
+  ]);
 
-  if (newHandle !== current.handle) {
-    batch.delete(doc(db, 'userLookup', `handle_${current.handle}`));
-    batch.set(doc(db, 'userLookup', `handle_${newHandle}`), {
+  if (emailLookupSnap.exists()) {
+    batch.update(emailLookupRef, {
+      displayName: fullName,
+      handle: newHandle,
+      photoUrl,
+      updatedAt: serverTimestamp(),
+    });
+  } else {
+    batch.set(emailLookupRef, {
       uid: current.uid,
       displayName: fullName,
       handle: newHandle,
@@ -220,11 +242,32 @@ export async function updateUserProfile(
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
-  } else {
-    batch.update(doc(db, 'userLookup', `handle_${newHandle}`), {
+  }
+
+  if (newHandle !== current.handle) {
+    batch.delete(doc(db, 'userLookup', `handle_${current.handle}`));
+    batch.set(handleLookupRef, {
+      uid: current.uid,
       displayName: fullName,
       handle: newHandle,
       photoUrl,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  } else if (handleLookupSnap.exists()) {
+    batch.update(handleLookupRef, {
+      displayName: fullName,
+      handle: newHandle,
+      photoUrl,
+      updatedAt: serverTimestamp(),
+    });
+  } else {
+    batch.set(handleLookupRef, {
+      uid: current.uid,
+      displayName: fullName,
+      handle: newHandle,
+      photoUrl,
+      createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
   }

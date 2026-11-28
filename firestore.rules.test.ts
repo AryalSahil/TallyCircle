@@ -150,4 +150,70 @@ export const DIRTY_DOZEN_CASES = [
     payload: { users: ['userA', 'userB'], requesterUid: 'userA', recipientUid: 'userB', status: 'accepted' },
     expected: 'PERMISSION_DENIED',
   },
+  {
+    name: '20. Authenticated user attempts arbitrary handle squatting in /userLookup without matching user profile',
+    path: '/userLookup/handle_someoneelse',
+    operation: 'create',
+    auth: { uid: 'userA', token: { email_verified: true } },
+    payload: { uid: 'userA', displayName: 'User A', handle: 'someoneelse' },
+    expected: 'PERMISSION_DENIED',
+  },
 ];
+
+export const FEATURE_SECURITY_CASES = [
+  {
+    name: '21. Non-participant attempts to read or mutate a Trip document',
+    path: '/trips/t1',
+    operation: 'get',
+    auth: { uid: 'outsider', token: { email_verified: true } },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '22. Unauthorized trip join without atomic tripInvites redemption',
+    path: '/trips/t1',
+    operation: 'update',
+    auth: { uid: 'outsider', token: { email_verified: true } },
+    payload: { participantUids: ['u1', 'outsider'] },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '23. Non-participant attempts to create a recurring expense rule inside a group',
+    path: '/groups/g1/recurringExpenses/r1',
+    operation: 'create',
+    auth: { uid: 'outsider', token: { email_verified: true } },
+    payload: { groupId: 'g1', title: 'Rent', amountPaise: 1500000, status: 'active' },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '24. Member attempts to forge generatedCount directly on recurring rule update',
+    path: '/groups/g1/recurringExpenses/r1',
+    operation: 'update',
+    auth: { uid: 'u1', token: { email_verified: true } },
+    payload: { generatedCount: 99 },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '25. Non-member attempts to redeem revoked trip invite token',
+    path: '/tripInvites/trp_revoked',
+    operation: 'update',
+    auth: { uid: 'outsider', token: { email_verified: true } },
+    payload: { usesCount: 1, usedBy: ['outsider'] },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    name: '26. Receipt metadata exceeding 5 MB limit or non-image contentType rejected',
+    path: '/groups/g1/expenses/e1',
+    operation: 'create',
+    auth: { uid: 'u1', token: { email_verified: true } },
+    payload: {
+      receiptMetadata: {
+        storagePath: 'receipts/groups/g1/e1/evil.exe',
+        fileName: 'evil.exe',
+        contentType: 'application/x-msdownload',
+        sizeBytes: 6291456,
+      },
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+];
+

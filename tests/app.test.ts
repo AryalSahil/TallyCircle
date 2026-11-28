@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import {
   amountToMinorUnits,
+  classifyBudgetStatus,
   computeGroupBalances,
   computeSplits,
   convertInrPaiseToCurrencyAmount,
@@ -19,7 +20,18 @@ import {
   isValidEmailAddress,
   sanitizeHandleInput,
 } from '../src/utils/helpers.js';
-import { DIRTY_DOZEN_CASES } from '../firestore.rules.test.js';
+import {
+  buildOccurrenceIdempotencyKey,
+  calculateDueOccurrences,
+  computeNextOccurrenceDate,
+} from '../src/utils/recurrence.js';
+import {
+  processRecurringRuleSynchronously,
+  type RecurringBatchAdapter,
+  type SimulatedExpenseRecord,
+} from '../src/utils/recurrenceEngine.js';
+import { sanitizeSpreadsheetCell } from '../src/utils/exportReports.js';
+import { DIRTY_DOZEN_CASES, FEATURE_SECURITY_CASES } from '../firestore.rules.test.js';
 import { createServerApp } from '../server.js';
 
 describe('Financial Splitting Engine (Integer Paise)', () => {
@@ -220,22 +232,32 @@ describe('Invitation Security, Messaging & Email Validation Helpers', () => {
     assert.equal(sanitizeHandleInput('@a'), 'a');
     assert.equal(sanitizeHandleInput('@@@'), '');
   });
+  it('sanitizes spreadsheet cells against CSV/Excel formula injection', () => {
+    assert.equal(sanitizeSpreadsheetCell('=SUM(A1:A2)'), "'=SUM(A1:A2)");
+    assert.equal(sanitizeSpreadsheetCell('+cmd|calc'), "'+cmd|calc");
+    assert.equal(sanitizeSpreadsheetCell('-1+1'), "'-1+1");
+    assert.equal(sanitizeSpreadsheetCell('@SUM(1,2)'), "'@SUM(1,2)");
+    assert.equal(sanitizeSpreadsheetCell('  =1+1'), "'  =1+1");
+    assert.equal(sanitizeSpreadsheetCell('Goa Dinner'), 'Goa Dinner');
+    assert.equal(sanitizeSpreadsheetCell(''), '');
+  });
 });
 
 describe('Security Rules & Spec Invariants', () => {
-  it('contains all 19 Dirty Dozen + extended adversarial cases', () => {
-    assert.equal(DIRTY_DOZEN_CASES.length, 19);
+  it('contains all 20 Dirty Dozen + extended adversarial cases', () => {
+    assert.equal(DIRTY_DOZEN_CASES.length, 20);
     for (const c of DIRTY_DOZEN_CASES) {
       assert.equal(c.expected, 'PERMISSION_DENIED');
     }
   });
 
-  it('enforces default deny, email verification, friendRequests rules, null-resource get guards, terminal settlement locks, invite revocation, emailInvites, and atomic group delete in firestore.rules', () => {
+  it('enforces default deny, email verification, friendRequests rules, userLookup handle ownership, null-resource get guards, terminal settlement locks, invite revocation, emailInvites, and atomic group delete in firestore.rules', () => {
     const rules = fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf8');
     assert.ok(rules.includes('allow read, write: if false;'));
     assert.ok(rules.includes('request.auth.token.email_verified == true'));
     assert.ok(rules.includes('match /friendRequests/{requestId}'));
     assert.ok(rules.includes('function isValidFriendRequest(data, requestId)'));
+    assert.ok(rules.includes("lookupKey == 'handle_' + incoming().handle"));
     assert.ok(rules.includes('resource == null || request.auth.uid in resource.data.users'));
     assert.ok(rules.includes('resource == null || request.auth.uid in resource.data.memberUids'));
     assert.ok(rules.includes("existing().status != 'confirmed'"));
@@ -244,6 +266,164 @@ describe('Security Rules & Spec Invariants', () => {
     assert.ok(rules.includes("incoming().status == 'revoked'"));
     assert.ok(rules.includes('match /emailInvites/{inviteId}'));
     assert.ok(rules.includes('match /invites/{token}'));
+  });
+
+  it('contains extended feature security cases and enforces Trips, Recurring Expenses, and Receipt Storage rules', () => {
+    assert.ok(FEATURE_SECURITY_CASES.length >= 6);
+    for (const c of FEATURE_SECURITY_CASES) {
+      assert.equal(c.expected, 'PERMISSION_DENIED');
+    }
+
+    const fsRules = fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf8');
+    assert.ok(fsRules.includes('match /recurringExpenses/{ruleId}'));
+    assert.ok(fsRules.includes('match /trips/{tripId}'));
+    assert.ok(fsRules.includes('match /tripInvites/{token}'));
+    assert.ok(fsRules.includes('function isValidReceiptMetadata(meta)'));
+    assert.ok(fsRules.includes('function isValidExpenseCategory(cat)'));
+    assert.ok(fsRules.includes("incoming().generatedCount == existing().generatedCount"));
+
+    const stRules = fs.readFileSync(path.resolve(process.cwd(), 'storage.rules'), 'utf8');
+    assert.ok(stRules.includes('allow read, write: if false;'));
+    assert.ok(stRules.includes('5 * 1024 * 1024'));
+    assert.ok(stRules.includes("request.resource.contentType.matches('^image/(jpeg|jpg|png|webp)$')"));
+    assert.ok(stRules.includes('ai-studio-631d205c-cc67-42b0-bf7e-75e4c4c5ed5e'));
+    assert.ok(stRules.includes('match /receipts/groups/{groupId}/{expenseId}/{fileName}'));
+    assert.ok(stRules.includes('match /receipts/trips/{tripId}/{expenseId}/{fileName}'));
+  });
+});
+
+describe('Recurring Expenses Engine & Idempotency', () => {
+  it('clamps month-end and leap-year occurrences accurately', () => {
+    const feb2026 = computeNextOccurrenceDate('2026-01-31', 'monthly', 0, 31);
+    assert.equal(feb2026, '2026-02-28');
+    const mar2026 = computeNextOccurrenceDate(feb2026, 'monthly', 0, 31);
+    assert.equal(mar2026, '2026-03-31');
+
+    const feb2028 = computeNextOccurrenceDate('2028-01-31', 'monthly', 0, 31);
+    assert.equal(feb2028, '2028-02-29');
+    const mar2028 = computeNextOccurrenceDate(feb2028, 'monthly', 0, 31);
+    assert.equal(mar2028, '2028-03-31');
+
+    const yearly2025 = computeNextOccurrenceDate('2024-02-29', 'yearly', 0, 29);
+    assert.equal(yearly2025, '2025-02-28');
+    const yearly2028 = computeNextOccurrenceDate('2027-02-28', 'yearly', 0, 29);
+    assert.equal(yearly2028, '2028-02-29');
+  });
+
+  it('catches up due dates up to endDate and marks schedule completed', () => {
+    const res = calculateDueOccurrences(
+      {
+        id: 'rule_1',
+        frequency: 'monthly',
+        intervalDays: 0,
+        anchorDayOfMonth: 31,
+        startDate: '2026-01-31',
+        endDate: '2026-03-31',
+        nextOccurrenceDate: '2026-01-31',
+        status: 'active',
+      },
+      '2026-04-15'
+    );
+    assert.deepEqual(res.dueDates, ['2026-01-31', '2026-02-28', '2026-03-31']);
+    assert.equal(res.nextOccurrenceDate, '2026-04-30');
+    assert.equal(res.nextStatus, 'completed');
+  });
+
+  it('guarantees idempotent generation across repeated runs via deterministic occurrence keys', () => {
+    const store = new Map<string, SimulatedExpenseRecord>();
+    const activities: string[] = [];
+    let ruleState: Parameters<typeof processRecurringRuleSynchronously>[0] = {
+      id: 'rule_rent',
+      groupId: 'grp_flat',
+      title: 'Apartment Rent',
+      description: 'Monthly shared flat rent',
+      amountPaise: 3000000,
+      currency: 'INR' as const,
+      originalAmountMinor: 3000000,
+      exchangeRateToInr: 1,
+      tags: ['rent'],
+      category: 'Bills' as const,
+      splitMethod: 'equal' as const,
+      payers: [{ uid: 'u1', name: 'Aarav', amountPaise: 3000000 }],
+      shares: [
+        { uid: 'u1', name: 'Aarav', sharePaise: 1500000, rawValue: 1 },
+        { uid: 'u2', name: 'Diya', sharePaise: 1500000, rawValue: 1 },
+      ],
+      participantUids: ['u1', 'u2'],
+      payerUids: ['u1'],
+      frequency: 'monthly' as const,
+      intervalDays: 0,
+      anchorDayOfMonth: 1,
+      startDate: '2026-01-01',
+      endDate: '',
+      nextOccurrenceDate: '2026-01-01',
+      status: 'active' as const,
+      generatedCount: 0,
+      lastGeneratedDate: '',
+      createdBy: 'u1',
+    };
+
+    const adapter: RecurringBatchAdapter = {
+      hasExpense: (_g, id) => store.has(id),
+      insertExpense: (_g, id, doc) => {
+        store.set(id, doc);
+      },
+      updateRule: (_g, _r, patch) => {
+        ruleState = { ...ruleState, ...patch };
+      },
+      appendActivity: (_g, summary) => {
+        activities.push(summary);
+      },
+    };
+
+    const first = processRecurringRuleSynchronously(ruleState, '2026-02-10', adapter);
+    assert.deepEqual(first.createdIds, [
+      buildOccurrenceIdempotencyKey('rule_rent', '2026-01-01'),
+      buildOccurrenceIdempotencyKey('rule_rent', '2026-02-01'),
+    ]);
+    assert.equal(store.size, 2);
+    assert.equal(ruleState.generatedCount, 2);
+    assert.equal(ruleState.nextOccurrenceDate, '2026-03-01');
+
+    // Simulate a duplicate run at the same date (e.g. concurrent Cloud Function / stale snapshot)
+    const staleRepeat = processRecurringRuleSynchronously(
+      { ...ruleState, nextOccurrenceDate: '2026-01-01', generatedCount: 2 },
+      '2026-02-10',
+      adapter
+    );
+    assert.equal(staleRepeat.createdIds.length, 0);
+    assert.equal(store.size, 2);
+    assert.equal(activities.length, 2);
+  });
+});
+
+describe('Trip Budget Thresholds & Balance Reconciliation', () => {
+  it('classifies trip budgets accurately at <80%, >=80%, and >100%', () => {
+    assert.deepEqual(classifyBudgetStatus(50000, 0), { percentUsed: 0, status: 'unset' });
+    assert.deepEqual(classifyBudgetStatus(50000, 100000), { percentUsed: 50, status: 'ok' });
+    assert.deepEqual(classifyBudgetStatus(80000, 100000), { percentUsed: 80, status: 'approaching' });
+    assert.deepEqual(classifyBudgetStatus(115000, 100000), { percentUsed: 115, status: 'exceeded' });
+  });
+
+  it('reconciles trip expenses across multi-currency entries with zero-sum verification', () => {
+    const res = computeGroupBalances(
+      { u1: 'Aarav', u2: 'Diya' },
+      [
+        {
+          amountPaise: 84500, // 10 USD converted at 84.50
+          payers: [{ uid: 'u1', name: 'Aarav', amountPaise: 84500 }],
+          shares: [
+            { uid: 'u1', name: 'Aarav', sharePaise: 42250 },
+            { uid: 'u2', name: 'Diya', sharePaise: 42250 },
+          ],
+        },
+      ],
+      []
+    );
+    assert.equal(res.zeroSumCheckPaise, 0);
+    assert.equal(verifyZeroSumBalance(res.memberBalances), true);
+    assert.equal(res.simplifiedDebts.length, 1);
+    assert.equal(res.simplifiedDebts[0].amountPaise, 42250);
   });
 });
 
@@ -261,6 +441,10 @@ describe('Backend Express API Endpoints', () => {
 
       const healthRes = await fetch(`${baseUrl}/api/health`);
       assert.equal(healthRes.status, 200);
+      assert.equal(healthRes.headers.get('x-content-type-options'), 'nosniff');
+      assert.equal(healthRes.headers.get('x-frame-options'), 'SAMEORIGIN');
+      assert.equal(healthRes.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
+      assert.equal(healthRes.headers.get('x-powered-by'), null);
       const healthJson = (await healthRes.json()) as {
         ok: boolean;
         status: string;
@@ -279,6 +463,13 @@ describe('Backend Express API Endpoints', () => {
         body: JSON.stringify({ token: 'grp_test' }),
       });
       assert.equal(validateInviteRes.status, 401);
+
+      const validateTripInviteRes = await fetch(`${baseUrl}/api/invitations/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: 'trp_test', kind: 'trip' }),
+      });
+      assert.equal(validateTripInviteRes.status, 401);
 
       const sendEmailRes = await fetch(`${baseUrl}/api/invitations/send-email`, {
         method: 'POST',

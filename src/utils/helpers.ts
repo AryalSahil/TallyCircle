@@ -78,6 +78,11 @@ export function buildGroupInviteUrl(token: string): string {
   return `${origin}/join/group/${encodeURIComponent(token)}`;
 }
 
+export function buildTripInviteUrl(token: string): string {
+  const origin = getPublicAppOrigin();
+  return `${origin}/join/trip/${encodeURIComponent(token)}`;
+}
+
 export function buildFriendInviteUrl(token: string): string {
   const origin = getPublicAppOrigin();
   return `${origin}/join/friend/${encodeURIComponent(token)}`;
@@ -88,6 +93,21 @@ export function buildGroupWhatsAppInviteMessage(groupName: string, inviteUrl: st
     'Hey! Join our group on TallyCircle (Friends Expense Tracker).',
     '',
     `Group: ${groupName}`,
+    '',
+    'Click this link to join:',
+    inviteUrl,
+  ].join('\n');
+}
+
+export function buildTripWhatsAppInviteMessage(
+  tripName: string,
+  destination: string,
+  inviteUrl: string
+): string {
+  return [
+    'Hey! Join our trip on TallyCircle (Friends Expense Tracker).',
+    '',
+    `Trip: ${tripName}${destination ? ` (${destination})` : ''}`,
     '',
     'Click this link to join:',
     inviteUrl,

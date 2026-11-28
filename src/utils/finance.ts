@@ -430,3 +430,23 @@ export function simplifyDebts(balances: MemberBalance[]): SimplifiedDebt[] {
 
   return debts;
 }
+
+export type BudgetThresholdStatus = 'unset' | 'ok' | 'approaching' | 'exceeded';
+
+export function classifyBudgetStatus(spentPaise: number, budgetPaise: number): {
+  percentUsed: number;
+  status: BudgetThresholdStatus;
+} {
+  if (!budgetPaise || budgetPaise <= 0) {
+    return { percentUsed: 0, status: 'unset' };
+  }
+  const percentUsed = Math.round((spentPaise / budgetPaise) * 100);
+  if (spentPaise > budgetPaise) {
+    return { percentUsed, status: 'exceeded' };
+  }
+  if (spentPaise >= Math.round(budgetPaise * 0.8)) {
+    return { percentUsed, status: 'approaching' };
+  }
+  return { percentUsed, status: 'ok' };
+}
+

@@ -1,0 +1,56 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Default deny all reads and writes
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    function isVerifiedMember() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isValidReceiptUpload() {
+      return request.resource != null
+        && request.resource.size > 0
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType != null
+        && request.resource.contentType.matches('^image/(jpeg|jpg|png|webp)$')
+        && request.resource.metadata != null
+        && request.resource.metadata.uploadedByUid == request.auth.uid;
+    }
+
+    // Group expense receipts — accessible only to verified members of the group
+    match /receipts/groups/{groupId}/{expenseId}/{fileName} {
+      allow read: if isVerifiedMember()
+        && firestore.exists(/databases/ai-studio-631d205c-cc67-42b0-bf7e-75e4c4c5ed5e/documents/groups/$(groupId))
+        && request.auth.uid in firestore.get(/databases/ai-studio-631d205c-cc67-42b0-bf7e-75e4c4c5ed5e/documents/groups/$(groupId)).data.memberUids;
+
+      allow create, update: if isVerifiedMember()
+        && isValidReceiptUpload()
+        && firestore.exists(/databases/ai-studio-631d205c-cc67-42b0-bf7e-75e4c4c5ed5e/documents/groups/$(groupId))
+        && request.auth.uid in firestore.get(/databases/ai-studio-631d205c-cc67-42b0-bf7e-75e4c4c5ed5e/documents/groups/$(groupId)).data.memberUids;
+
+      allow delete: if isVerifiedMember()
+        && firestore.exists(/databases/ai-studio-631d205c-cc67-42b0-bf7e-75e4c4c5ed5e/documents/groups/$(groupId))
+        && request.auth.uid in firestore.get(/databases/ai-studio-631d205c-cc67-42b0-bf7e-75e4c4c5ed5e/documents/groups/$(groupId)).data.memberUids;
+    }
+
+    // Trip expense receipts — accessible only to verified participants of the trip
+    match /receipts/trips/{tripId}/{expenseId}/{fileName} {
+      allow read: if isVerifiedMember()
+        && firestore.exists(/databases/ai-studio-631d205c-cc67-42b0-bf7e-75e4c4c5ed5e/documents/trips/$(tripId))
+        && request.auth.uid in firestore.get(/databases/ai-studio-631d205c-cc67-42b0-bf7e-75e4c4c5ed5e/documents/trips/$(tripId)).data.participantUids;
+
+      allow create, update: if isVerifiedMember()
+        && isValidReceiptUpload()
+        && firestore.exists(/databases/ai-studio-631d205c-cc67-42b0-bf7e-75e4c4c5ed5e/documents/trips/$(tripId))
+        && request.auth.uid in firestore.get(/databases/ai-studio-631d205c-cc67-42b0-bf7e-75e4c4c5ed5e/documents/trips/$(tripId)).data.participantUids;
+
+      allow delete: if isVerifiedMember()
+        && firestore.exists(/databases/ai-studio-631d205c-cc67-42b0-bf7e-75e4c4c5ed5e/documents/trips/$(tripId))
+        && request.auth.uid in firestore.get(/databases/ai-studio-631d205c-cc67-42b0-bf7e-75e4c4c5ed5e/documents/trips/$(tripId)).data.participantUids;
+    }
+  }
+}

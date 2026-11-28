@@ -2,13 +2,14 @@ import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Plus,
-  Users,
   ArrowUpRight,
   ArrowDownLeft,
   CheckCircle2,
   ReceiptIndianRupee,
   Handshake,
   Layers,
+  Plane,
+  Paperclip,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useAppData } from '../contexts/AppDataContext';
@@ -17,8 +18,10 @@ import { useToast } from '../contexts/ToastContext';
 import { formatOriginalCurrency, isSupportedCurrency } from '../utils/finance';
 import { formatRelativeTimestamp, formatShortDate } from '../utils/helpers';
 import { confirmSettlement } from '../services/settlementService';
+import { confirmTripSettlement } from '../services/tripService';
 import { Button, Card, EmptyState, SkeletonRows } from '../components/ui/Primitives';
 import { GroupModal } from '../components/modals/GroupModal';
+import { TripModal } from '../components/modals/TripModal';
 import { SettlementModal } from '../components/modals/SettlementModal';
 
 export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: string) => void }) {
@@ -26,8 +29,12 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
   const {
     activeGroups,
     groups,
+    activeTrips,
+    trips,
     expensesByGroup,
+    expensesByTrip,
     settlementsByGroup,
+    settlementsByTrip,
     summary,
     loadingData,
   } = useAppData();
@@ -36,6 +43,7 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
   const navigate = useNavigate();
 
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
+  const [createTripOpen, setCreateTripOpen] = useState(false);
   const [settleModalGroupId, setSettleModalGroupId] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
 
@@ -44,15 +52,25 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
     [groups, activeGroups, settleModalGroupId]
   );
 
-  const handleQuickConfirm = async (settlementId: string, groupId: string) => {
+  const handleQuickConfirm = async (
+    settlementId: string,
+    parentId: string,
+    kind: 'group' | 'trip' = 'group'
+  ) => {
     if (!profile) return;
-    const grp = groups.find((g) => g.id === groupId);
-    const st = (settlementsByGroup[groupId] || []).find((s) => s.id === settlementId);
-    if (!grp || !st) return;
-
     setConfirmingId(settlementId);
     try {
-      await confirmSettlement(profile, grp, st);
+      if (kind === 'trip') {
+        const trp = trips.find((t) => t.id === parentId);
+        const st = (settlementsByTrip[parentId] || []).find((s) => s.id === settlementId);
+        if (!trp || !st) return;
+        await confirmTripSettlement(profile, trp, st);
+      } else {
+        const grp = groups.find((g) => g.id === parentId);
+        const st = (settlementsByGroup[parentId] || []).find((s) => s.id === settlementId);
+        if (!grp || !st) return;
+        await confirmSettlement(profile, grp, st);
+      }
       showToast('Payment confirmed', { variant: 'success' });
     } catch (err: unknown) {
       showToast('Could not confirm', {
@@ -73,7 +91,8 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
             Hello, {profile?.fullName?.split(' ')[0]}
           </h2>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-            {activeGroups.length} active {activeGroups.length === 1 ? 'group' : 'groups'} · Real-time group ledger
+            {activeGroups.length} active {activeGroups.length === 1 ? 'group' : 'groups'} ·{' '}
+            {activeTrips.length} active {activeTrips.length === 1 ? 'trip' : 'trips'}
           </p>
         </div>
 
@@ -81,6 +100,10 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
           <Button variant="outline" size="sm" onClick={() => setCreateGroupOpen(true)} className="w-full sm:w-auto">
             <Layers className="w-4 h-4" />
             Create Group
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setCreateTripOpen(true)} className="w-full sm:w-auto">
+            <Plane className="w-4 h-4" />
+            Plan Trip
           </Button>
           <Button
             variant="outline"
@@ -91,10 +114,6 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
           >
             <Handshake className="w-4 h-4" />
             Settle Up
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => navigate('/friends')} className="w-full sm:w-auto">
-            <Users className="w-4 h-4" />
-            Invite Friend
           </Button>
           <Button size="sm" onClick={() => onAddExpense()} className="w-full sm:w-auto">
             <Plus className="w-4 h-4" />
@@ -195,7 +214,7 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
                       <Button
                         size="sm"
                         loading={confirmingId === st.id}
-                        onClick={() => handleQuickConfirm(st.id, st.groupId)}
+                        onClick={() => handleQuickConfirm(st.id, st.groupId, st.kind || 'group')}
                       >
                         <CheckCircle2 className="w-3.5 h-3.5" />
                         Confirm
@@ -204,7 +223,9 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => navigate(`/groups/${st.groupId}`)}
+                        onClick={() =>
+                          navigate(st.kind === 'trip' ? `/trips/${st.groupId}` : `/groups/${st.groupId}`)
+                        }
                       >
                         View
                       </Button>
@@ -264,7 +285,13 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
                     <button
                       key={exp.id}
                       type="button"
-                      onClick={() => navigate(`/groups/${exp.groupId}`)}
+                      onClick={() =>
+                        navigate(
+                          exp.kind === 'trip' || exp.tripId
+                            ? `/trips/${exp.tripId || exp.groupId}`
+                            : `/groups/${exp.groupId}`
+                        )
+                      }
                       className="w-full text-left px-4 sm:px-5 py-3.5 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors flex items-center justify-between gap-3 cursor-pointer"
                     >
                       <div className="min-w-0 flex-1">
@@ -272,6 +299,9 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
                           <p className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate max-w-full">
                             {exp.title}
                           </p>
+                          {(exp.receiptMetadata?.storagePath || exp.receiptImage) && (
+                            <Paperclip className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                          )}
                           {exp.tags && exp.tags.length > 0 && (
                             <span className="text-xs text-emerald-600 dark:text-emerald-400 truncate max-w-full">
                               {exp.tags.map((t) => `#${t}`).join(' · ')}
@@ -346,6 +376,49 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
               </div>
             )}
           </Card>
+
+          {activeTrips.length > 0 && (
+            <Card className="overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
+                  Active trips
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => navigate('/trips')}
+                  className="text-xs font-medium text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer"
+                >
+                  All trips
+                </button>
+              </div>
+              <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                {activeTrips.map((t) => {
+                  const exps = expensesByTrip[t.id] || [];
+                  const total = exps.reduce((s, e) => s + e.amountPaise, 0);
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => navigate(`/trips/${t.id}`)}
+                      className="w-full text-left px-5 py-3.5 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors flex items-center justify-between gap-4 cursor-pointer"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">
+                          {t.name}
+                        </p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+                          {t.destination} · {t.participantUids.length} travelers · {exps.length} expenses
+                        </p>
+                      </div>
+                      <span className="font-mono-nums text-sm font-medium text-slate-700 dark:text-slate-300 shrink-0">
+                        {formatAmount(total)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </Card>
+          )}
         </div>
 
         {/* Right Column: Recent Activity Feed */}
@@ -357,7 +430,7 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
           </div>
           {summary.recentActivities.length === 0 ? (
             <div className="p-6 text-center text-sm text-slate-500 dark:text-slate-400">
-              Group updates, expenses, and confirmations will appear here in real time.
+              Group and trip updates will appear here in real time.
             </div>
           ) : (
             <div className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -365,7 +438,9 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
                 <button
                   key={act.id}
                   type="button"
-                  onClick={() => navigate(`/groups/${act.groupId}`)}
+                  onClick={() =>
+                    navigate(act.kind === 'trip' ? `/trips/${act.groupId}` : `/groups/${act.groupId}`)
+                  }
                   className="w-full text-left px-5 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors cursor-pointer"
                 >
                   <p className="text-sm text-slate-800 dark:text-slate-200 leading-snug">
@@ -385,6 +460,12 @@ export function DashboardPage({ onAddExpense }: { onAddExpense: (groupId?: strin
         open={createGroupOpen}
         onClose={() => setCreateGroupOpen(false)}
         onCreated={(id) => navigate(`/groups/${id}`)}
+      />
+
+      <TripModal
+        open={createTripOpen}
+        onClose={() => setCreateTripOpen(false)}
+        onCreated={(id) => navigate(`/trips/${id}`)}
       />
 
       {settleTargetGroup && (

@@ -15,6 +15,7 @@ import {
   type Firestore,
   type WriteBatch,
 } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
@@ -38,6 +39,7 @@ function createFirestoreInstance(): Firestore {
 
 export const db = createFirestoreInstance();
 export const auth = getAuth(app);
+export const storage = getStorage(app);
 setPersistence(auth, browserLocalPersistence).catch((err) => {
   console.warn('Could not set local auth persistence:', err);
 });

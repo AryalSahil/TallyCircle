@@ -21,8 +21,8 @@ import {
   reload,
 } from 'firebase/auth';
 import { auth, googleAuthProvider } from '../lib/firebase';
-import type { CurrencyCode, UserPrivateProfile } from '../types';
-import { ensureUserProfile, updateUserProfile } from '../services/userService';
+import type { CurrencyCode, ThemePreference, UserPrivateProfile } from '../types';
+import { clearPublicProfileCache, ensureUserProfile, updateUserProfile } from '../services/userService';
 
 interface AuthContextValue {
   firebaseUser: User | null;
@@ -43,6 +43,7 @@ interface AuthContextValue {
     upiId?: string;
     photoUrl?: string;
     handle?: string;
+    theme?: ThemePreference;
     preferredCurrency?: CurrencyCode;
     customTags?: string[];
   }) => Promise<UserPrivateProfile>;
@@ -178,6 +179,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       upiId?: string;
       photoUrl?: string;
       handle?: string;
+      theme?: ThemePreference;
       preferredCurrency?: CurrencyCode;
       customTags?: string[];
     }) => {
@@ -190,6 +192,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const logout = useCallback(async () => {
+    clearPublicProfileCache();
     await signOut(auth);
     setProfile(null);
     setFirebaseUser(null);

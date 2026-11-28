@@ -4,8 +4,9 @@ import { ExternalLink, Smartphone, Banknote } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useAppData } from '../../contexts/AppDataContext';
 import { useToast } from '../../contexts/ToastContext';
-import type { Group, Settlement, SettlementMethod } from '../../types';
+import type { Group, Settlement, SettlementMethod, Trip } from '../../types';
 import { recordSettlement, updatePendingSettlement } from '../../services/settlementService';
+import { recordTripSettlement, updatePendingTripSettlement } from '../../services/tripService';
 import { formatINR, inrToPaise, paiseToInputString } from '../../utils/finance';
 import { buildUpiUri } from '../../utils/helpers';
 import { Button, InputField, Modal } from '../ui/Primitives';
@@ -14,6 +15,7 @@ export function SettlementModal({
   open,
   onClose,
   group,
+  trip,
   existingSettlements,
   editingSettlement,
   initialFromUid,
@@ -22,7 +24,8 @@ export function SettlementModal({
 }: {
   open: boolean;
   onClose: () => void;
-  group: Group;
+  group?: Group | null;
+  trip?: Trip | null;
   existingSettlements: Settlement[];
   editingSettlement?: Settlement | null;
   initialFromUid?: string;
@@ -33,13 +36,17 @@ export function SettlementModal({
   const { profilesMap } = useAppData();
   const { showToast } = useToast();
 
+  const participantUids = trip ? trip.participantUids : group?.memberUids || [];
+  const participantNames = trip ? trip.participantNames : group?.memberNames || {};
+  const scopeTitle = trip ? trip.name : group?.name || 'Ledger';
+
   const members = useMemo(
     () =>
-      group.memberUids.map((uid) => ({
+      participantUids.map((uid) => ({
         uid,
-        name: group.memberNames[uid] || 'Member',
+        name: participantNames[uid] || 'Member',
       })),
-    [group]
+    [participantUids, participantNames]
   );
 
   const [fromUid, setFromUid] = useState('');
@@ -82,15 +89,15 @@ export function SettlementModal({
     if (!receiverUpiId || amountPaise <= 0) return '';
     return buildUpiUri({
       upiId: receiverUpiId,
-      payeeName: group.memberNames[toUid] || receiverProfile?.displayName || 'Friend',
+      payeeName: participantNames[toUid] || receiverProfile?.displayName || 'Friend',
       amountInr: amountPaise / 100,
-      note: `${group.name} settlement`,
+      note: `${scopeTitle} settlement`,
     });
-  }, [receiverUpiId, amountPaise, group.memberNames, group.name, toUid, receiverProfile?.displayName]);
+  }, [receiverUpiId, amountPaise, participantNames, scopeTitle, toUid, receiverProfile?.displayName]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!profile) return;
+    if (!profile || (!group && !trip)) return;
     if (!fromUid || !toUid || fromUid === toUid) {
       showToast('Select two different members', { variant: 'error' });
       return;
@@ -103,17 +110,19 @@ export function SettlementModal({
     setSubmitting(true);
     try {
       if (editingSettlement) {
-        const { queuedOffline } = await updatePendingSettlement(
-          profile,
-          group,
-          editingSettlement,
-          {
-            amountPaise,
-            method,
-            upiTransactionRef: upiRef,
-            note,
-          }
-        );
+        const { queuedOffline } = trip
+          ? await updatePendingTripSettlement(profile, trip, editingSettlement, {
+              amountPaise,
+              method,
+              upiTransactionRef: upiRef,
+              note,
+            })
+          : await updatePendingSettlement(profile, group!, editingSettlement, {
+              amountPaise,
+              method,
+              upiTransactionRef: upiRef,
+              note,
+            });
         if (queuedOffline) {
           showToast('Saved offline — queued for sync', {
             description: 'Changes are stored locally and will sync automatically when you reconnect.',
@@ -123,17 +132,20 @@ export function SettlementModal({
           showToast('Pending settlement updated', { variant: 'success' });
         }
       } else {
-        const { queuedOffline } = await recordSettlement(profile, group, {
+        const payload = {
           fromUid,
-          fromName: group.memberNames[fromUid] || 'Member',
+          fromName: participantNames[fromUid] || 'Member',
           toUid,
-          toName: group.memberNames[toUid] || 'Member',
+          toName: participantNames[toUid] || 'Member',
           amountPaise,
           method,
           upiTransactionRef: upiRef,
           note,
           existingSettlements,
-        });
+        };
+        const { queuedOffline } = trip
+          ? await recordTripSettlement(profile, trip, payload)
+          : await recordSettlement(profile, group!, payload);
         if (queuedOffline) {
           showToast('Saved offline — queued for sync', {
             description: 'Settlement is stored locally and will sync automatically when you reconnect.',
@@ -278,7 +290,7 @@ export function SettlementModal({
               </div>
             ) : (
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                {group.memberNames[toUid] || 'This member'} has not added a UPI ID to their profile yet. You can still record the transfer below.
+                {participantNames[toUid] || 'This member'} has not added a UPI ID to their profile yet. You can still record the transfer below.
               </p>
             )}
 

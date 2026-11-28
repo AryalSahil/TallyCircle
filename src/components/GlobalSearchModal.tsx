@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Search, X, ArrowRight, Tag } from 'lucide-react';
+import { Search, X, ArrowRight, Tag, Plane, Layers } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppData } from '../contexts/AppDataContext';
 import { useCurrency } from '../contexts/CurrencyContext';
-import { Expense, Group } from '../types';
+import { Expense, Group, Trip } from '../types';
 import { formatOriginalCurrency, isSupportedCurrency, normalizeExpenseTag } from '../utils/finance';
 import { formatShortDate } from '../utils/helpers';
 import { ExpenseDetailModal } from './modals/ExpenseDetailModal';
@@ -11,7 +11,9 @@ import { ExpenseFormModal } from './modals/ExpenseFormModal';
 
 interface EnrichedExpense {
   expense: Expense;
-  group: Group;
+  group?: Group;
+  trip?: Trip;
+  scopeLabel: string;
 }
 
 export function GlobalSearchModal({
@@ -21,14 +23,14 @@ export function GlobalSearchModal({
   open: boolean;
   onClose: () => void;
 }) {
-  const { groups, expensesByGroup } = useAppData();
+  const { groups, expensesByGroup, trips, expensesByTrip } = useAppData();
   const { formatAmount } = useCurrency();
   const navigate = useNavigate();
 
   const [query, setQuery] = useState('');
   const [selectedTag, setSelectedTag] = useState('');
   const [detailTarget, setDetailTarget] = useState<EnrichedExpense | null>(null);
-  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+  const [editingTarget, setEditingTarget] = useState<EnrichedExpense | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -44,11 +46,16 @@ export function GlobalSearchModal({
     const items: EnrichedExpense[] = [];
     for (const group of groups) {
       for (const expense of expensesByGroup[group.id] || []) {
-        items.push({ expense, group });
+        items.push({ expense, group, scopeLabel: group.name });
+      }
+    }
+    for (const trip of trips) {
+      for (const expense of expensesByTrip[trip.id] || []) {
+        items.push({ expense, trip, scopeLabel: `${trip.name} (${trip.destination})` });
       }
     }
     return items.sort((a, b) => b.expense.expenseDate.localeCompare(a.expense.expenseDate));
-  }, [groups, expensesByGroup]);
+  }, [groups, expensesByGroup, trips, expensesByTrip]);
 
   const allTags = useMemo(() => {
     const counts = new Map<string, number>();
@@ -67,7 +74,7 @@ export function GlobalSearchModal({
     const q = query.trim().toLowerCase();
     const cleanTagQuery = normalizeExpenseTag(q);
 
-    return allExpenses.filter(({ expense, group }) => {
+    return allExpenses.filter(({ expense, scopeLabel }) => {
       if (selectedTag && !(expense.tags || []).includes(selectedTag)) {
         return false;
       }
@@ -76,7 +83,7 @@ export function GlobalSearchModal({
       const titleMatch =
         expense.title.toLowerCase().includes(q) ||
         (expense.description || '').toLowerCase().includes(q) ||
-        group.name.toLowerCase().includes(q) ||
+        scopeLabel.toLowerCase().includes(q) ||
         expense.category.toLowerCase().includes(q);
 
       const tagMatch = (expense.tags || []).some(
@@ -91,7 +98,7 @@ export function GlobalSearchModal({
     });
   }, [allExpenses, query, selectedTag]);
 
-  if (!open && !detailTarget && !editingExpense) return null;
+  if (!open && !detailTarget && !editingTarget) return null;
 
   return (
     <>
@@ -107,7 +114,6 @@ export function GlobalSearchModal({
             className="w-full max-w-2xl rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xl overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Search Input Header */}
             <div className="flex items-center gap-2 sm:gap-3 px-3.5 sm:px-4 py-2.5 sm:py-3 border-b border-slate-100 dark:border-slate-800">
               <Search className="w-4 h-4 text-slate-400 shrink-0" />
               <input
@@ -115,7 +121,7 @@ export function GlobalSearchModal({
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search title, #tag, or participant..."
+                placeholder="Search across groups & trips by title, #tag, or friend..."
                 className="flex-1 min-w-0 bg-transparent text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none"
               />
               {(query || selectedTag) && (
@@ -140,7 +146,6 @@ export function GlobalSearchModal({
               </button>
             </div>
 
-            {/* Quick Tag Filters */}
             {allTags.length > 0 && (
               <div className="px-3.5 sm:px-4 py-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/50 flex items-center gap-1.5 overflow-x-auto no-scrollbar sm:flex-wrap">
                 <span className="text-[11px] font-medium text-slate-400 flex items-center gap-1 mr-1 shrink-0">
@@ -167,7 +172,6 @@ export function GlobalSearchModal({
               </div>
             )}
 
-            {/* Results List */}
             <div className="max-h-[65dvh] sm:max-h-[60dvh] overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
               {results.length === 0 ? (
                 <div className="py-12 px-6 text-center space-y-1">
@@ -179,25 +183,32 @@ export function GlobalSearchModal({
                   </p>
                 </div>
               ) : (
-                results.slice(0, 30).map(({ expense, group }) => {
+                results.slice(0, 30).map((item) => {
+                  const { expense, group, trip, scopeLabel } = item;
                   const origCurr = isSupportedCurrency(expense.currency)
                     ? expense.currency
                     : 'INR';
                   const origMinor = expense.originalAmountMinor || expense.amountPaise;
+                  const targetPath = trip ? `/trips/${trip.id}` : `/groups/${group!.id}`;
                   return (
                     <div
-                      key={`${group.id}_${expense.id}`}
+                      key={`${trip ? `trip_${trip.id}` : `grp_${group?.id}`}_${expense.id}`}
                       className="px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors flex items-center justify-between gap-3"
                     >
                       <button
                         type="button"
                         onClick={() => {
-                          setDetailTarget({ expense, group });
+                          setDetailTarget(item);
                           onClose();
                         }}
                         className="min-w-0 flex-1 text-left cursor-pointer"
                       >
                         <div className="flex items-center gap-2 min-w-0">
+                          {trip ? (
+                            <Plane className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+                          ) : (
+                            <Layers className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                          )}
                           <span className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">
                             {expense.title}
                           </span>
@@ -208,9 +219,8 @@ export function GlobalSearchModal({
                           )}
                         </div>
                         <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">
-                          {group.name} · {expense.category} · {formatShortDate(expense.expenseDate)} ·{' '}
-                          Paid by {expense.payers.map((p) => p.name).join(', ')} ·{' '}
-                          Split: {expense.shares.map((s) => s.name).join(', ')}
+                          {scopeLabel} · {expense.category} · {formatShortDate(expense.expenseDate)} ·{' '}
+                          Paid by {expense.payers.map((p) => p.name).join(', ')}
                         </p>
                       </button>
 
@@ -229,9 +239,9 @@ export function GlobalSearchModal({
                           type="button"
                           onClick={() => {
                             onClose();
-                            navigate(`/groups/${group.id}`);
+                            navigate(targetPath);
                           }}
-                          title={`Open ${group.name}`}
+                          title={`Open ${scopeLabel}`}
                           className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
                         >
                           <ArrowRight className="w-4 h-4" />
@@ -260,19 +270,22 @@ export function GlobalSearchModal({
           open={Boolean(detailTarget)}
           onClose={() => setDetailTarget(null)}
           group={detailTarget.group}
+          trip={detailTarget.trip}
           expense={detailTarget.expense}
-          onEdit={(exp) => {
+          onEdit={() => {
+            const target = detailTarget;
             setDetailTarget(null);
-            setEditingExpense(exp);
+            setEditingTarget(target);
           }}
         />
       )}
 
       <ExpenseFormModal
-        open={Boolean(editingExpense)}
-        onClose={() => setEditingExpense(null)}
-        defaultGroupId={editingExpense?.groupId}
-        editingExpense={editingExpense}
+        open={Boolean(editingTarget)}
+        onClose={() => setEditingTarget(null)}
+        defaultGroupId={editingTarget?.group?.id}
+        defaultTripId={editingTarget?.trip?.id}
+        editingExpense={editingTarget?.expense}
       />
     </>
   );
